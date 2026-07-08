@@ -146,12 +146,10 @@ impl ScirustBackend {
 
     /// Reverse-lookup: which page id owns `slot`, if any live entry points at it.
     fn id_of_slot(&self, slot: usize) -> Option<u64> {
-        self.slots
-            .iter()
-            .find_map(|(id, e)| match e {
-                SlotEntry::Live(s) if *s == slot => Some(*id),
-                _ => None,
-            })
+        self.slots.iter().find_map(|(id, e)| match e {
+            SlotEntry::Live(s) if *s == slot => Some(*id),
+            _ => None,
+        })
     }
 
     /// Mark any `Live(slot)` whose arena state is now `Cold` (recycled by
@@ -179,7 +177,7 @@ impl ScirustBackend {
     /// *approximate* restore (latent-only), mirroring `SlhaAdapter`'s
     /// `RestoreMode::Approximate`.
     fn restore_approximate(&mut self, id: u64, slot: usize) {
-        let mut tile = self.cache.tile(slot).clone();
+        let mut tile = *self.cache.tile(slot);
         tile.residual_bitmap = [0u64; RESIDUAL_WORDS];
         tile.dynamic_lambda = 0.0;
         tile.flags &= !FLAG_WARM;
@@ -367,8 +365,7 @@ mod tests {
         let mut bytes = [0u8; 128];
         bytes[OFF_LATENT..OFF_LATENT + LATENT_BYTES].copy_from_slice(&tile.latent_kv);
         for (i, w) in tile.residual_bitmap.iter().enumerate() {
-            bytes[OFF_RESIDUAL + i * 8..OFF_RESIDUAL + i * 8 + 8]
-                .copy_from_slice(&w.to_le_bytes());
+            bytes[OFF_RESIDUAL + i * 8..OFF_RESIDUAL + i * 8 + 8].copy_from_slice(&w.to_le_bytes());
         }
         bytes[OFF_SCALE..OFF_SCALE + 4].copy_from_slice(&tile.scale.to_le_bytes());
         bytes[OFF_LAMBDA..OFF_LAMBDA + 4].copy_from_slice(&tile.dynamic_lambda.to_le_bytes());
@@ -378,7 +375,11 @@ mod tests {
         bytes[OFF_HEAD..OFF_HEAD + 2].copy_from_slice(&tile.head_id.to_le_bytes());
         bytes[OFF_FLAGS..OFF_FLAGS + 2].copy_from_slice(&tile.flags.to_le_bytes());
         bytes[OFF_GROUPS..OFF_GROUPS + N_GROUPS].copy_from_slice(&tile.group_scales);
-        AlignedMemoryPage { page_id: id, state: MemoryState::Hot, payload: crate::AlignedPayload { bytes } }
+        AlignedMemoryPage {
+            page_id: id,
+            state: MemoryState::Hot,
+            payload: crate::AlignedPayload { bytes },
+        }
     }
 
     #[test]
@@ -415,7 +416,11 @@ mod tests {
             be.upsert(tile_page(id, id as f32 * 0.1));
         }
         be.enforce_budget();
-        assert!(be.live_bytes() <= 160, "live_bytes={} > budget", be.live_bytes());
+        assert!(
+            be.live_bytes() <= 160,
+            "live_bytes={} > budget",
+            be.live_bytes()
+        );
     }
 
     #[test]

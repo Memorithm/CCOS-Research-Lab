@@ -55,8 +55,8 @@ use crate::guard::{GuardLayer, GuardResult};
 use crate::license::{Feature, LicenseError, Licensing};
 use rsi::audit::{AuditEvent, AuditLog};
 use rsi::dgm::{
-    Archive, DgmConfig, DgmEngine, Evaluator, Fitness, ImprovementContext,
-    Proposer, Proposal, StepOutcome, promote_to_live,
+    promote_to_live, Archive, DgmConfig, DgmEngine, Evaluator, Fitness, ImprovementContext,
+    Proposal, Proposer, StepOutcome,
 };
 use rsi::Rng;
 
@@ -179,6 +179,10 @@ impl DgmAccess {
     /// config. Reachable only behind [`Self::unlock`]. The editable-file
     /// allowlist is the primary security control; `guard` sanitizes LLM proposer
     /// output when the proposer is LLM-backed (see [`GuardedProposer`]).
+    // Deliberately takes every sandbox ingredient explicitly (no builder): the
+    // caller must SEE the allowlist, the guard and the seed at the call site —
+    // that visibility is part of the DGM security contract.
+    #[allow(clippy::too_many_arguments)]
     pub fn guarded_dgm<P: Proposer, E: Evaluator>(
         &self,
         archive: Archive,
@@ -212,7 +216,9 @@ impl GuardedDgmConfig {
     /// Normalised: a leading `./` is stripped; the comparison is exact.
     pub fn is_editable(&self, target: &str) -> bool {
         let t = target.trim_start_matches("./");
-        self.editable_allowlist.iter().any(|a| a.trim_start_matches("./") == t)
+        self.editable_allowlist
+            .iter()
+            .any(|a| a.trim_start_matches("./") == t)
     }
 
     pub fn backup_dir_or(&self, workspace_root: &Path) -> PathBuf {
@@ -578,16 +584,25 @@ fn run_bounded(
     let mut stderr = child.stderr.take().unwrap();
     let out_h = std::thread::spawn(move || {
         let mut s = String::new();
-        let _ = stdout.by_ref().take(per_stream as u64).read_to_string(&mut s);
+        let _ = stdout
+            .by_ref()
+            .take(per_stream as u64)
+            .read_to_string(&mut s);
         s
     });
     let err_h = std::thread::spawn(move || {
         let mut s = String::new();
-        let _ = stderr.by_ref().take(per_stream as u64).read_to_string(&mut s);
+        let _ = stderr
+            .by_ref()
+            .take(per_stream as u64)
+            .read_to_string(&mut s);
         s
     });
     loop {
-        match child.try_wait().map_err(|e| rsi::dgm::DgmError::Io(e.to_string()))? {
+        match child
+            .try_wait()
+            .map_err(|e| rsi::dgm::DgmError::Io(e.to_string()))?
+        {
             Some(status) => {
                 let out = out_h.join().unwrap_or_default();
                 let err = err_h.join().unwrap_or_default();
@@ -610,36 +625,25 @@ fn run_bounded(
     Ok((false, format!("{out}\n{err}")))
 }
 
+/// Sum the `N passed` / `N failed` counters of every `test result:` line in a
+/// cargo-test output (one line per test binary). These counts feed the
+/// tamper-evident `RsiMutation` audit payload, so they must reflect the real
+/// harness output format: `test result: ok. 5 passed; 0 failed; …`.
 fn parse_test_counts(output: &str) -> (u32, u32) {
     let mut passed = 0u32;
     let mut failed = 0u32;
     for line in output.lines() {
-        if let Some(rest) = line.strip_prefix("test result:") {
-            for tok in rest.split(';') {
-                let tok = tok.trim();
-                if let Some(n) = tok.strip_prefix("passed") {
-                    if let Some(n) = n.trim().strip_prefix(|c: char| c == ',').unwrap_or(n).strip_prefix(" ").unwrap_or(n).parse::<u32>().ok() {
-                        passed += n;
-                    } else if let Some(n) = tok
-                        .trim_start_matches("passed")
-                        .trim()
-                        .trim_start_matches(',')
-                        .trim()
-                        .parse::<u32>()
-                        .ok()
-                    {
-                        passed += n;
-                    }
-                } else if let Some(n) = tok
-                    .trim_start_matches("failed")
-                    .trim()
-                    .trim_start_matches(',')
-                    .trim()
-                    .parse::<u32>()
-                    .ok()
-                {
-                    failed += n;
-                }
+        let Some(rest) = line.trim_start().strip_prefix("test result:") else {
+            continue;
+        };
+        // Tokens look like "ok. 5 passed" / "0 failed" / "finished in 0.06s";
+        // splitting on '.' too isolates the leading status word.
+        for tok in rest.split([';', '.']) {
+            let tok = tok.trim();
+            if let Some(n) = tok.strip_suffix(" passed") {
+                passed += n.trim().parse::<u32>().unwrap_or(0);
+            } else if let Some(n) = tok.strip_suffix(" failed") {
+                failed += n.trim().parse::<u32>().unwrap_or(0);
             }
         }
     }
@@ -660,6 +664,20 @@ mod tests {
             licensee: "acme".to_string(),
             expires_at: None,
         })
+    }
+
+    /// The counters that feed the tamper-evident `RsiMutation` payload must
+    /// parse the REAL cargo-test harness format (`N passed`, not `passed N`),
+    /// summed across test binaries, ignoring the `finished in 0.06s` tail.
+    #[test]
+    fn parse_test_counts_reads_real_cargo_output() {
+        let out = "running 5 tests\n\
+                   test a ... ok\n\
+                   test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s\n\
+                   running 3 tests\n\
+                   test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.20s\n";
+        assert_eq!(parse_test_counts(out), (6, 2));
+        assert_eq!(parse_test_counts("no harness line here"), (0, 0));
     }
 
     #[test]
@@ -742,7 +760,10 @@ mod tests {
         write_workspace(live, "src/lib.rs", "fn old() {}\n");
 
         let patch = Patch::new("src/lib.rs", "fn old() {}", "fn new() {}");
-        let proposer = OnceProposer { patch, fired: std::cell::Cell::new(false) };
+        let proposer = OnceProposer {
+            patch,
+            fired: std::cell::Cell::new(false),
+        };
         // Evaluator: the patched snapshot is "all green".
         let evaluator = ClosureEvaluator::new(|_ws| Fitness {
             compiles: true,
@@ -770,7 +791,11 @@ mod tests {
         assert!(live_content.contains("fn new() {}"), "live: {live_content}");
         assert!(!live_content.contains("fn old() {}"));
         // The audit log recorded the promote + the step.
-        assert!(audit.event_count() >= 2, "event_count={}", audit.event_count());
+        assert!(
+            audit.event_count() >= 2,
+            "event_count={}",
+            audit.event_count()
+        );
         assert!(audit.verify_integrity().valid);
     }
 
@@ -783,7 +808,10 @@ mod tests {
 
         // Proposer targets a NON-allowlisted file.
         let patch = Patch::new("src/secret.rs", "\"secret\"", "\"leaked\"");
-        let proposer = OnceProposer { patch, fired: std::cell::Cell::new(false) };
+        let proposer = OnceProposer {
+            patch,
+            fired: std::cell::Cell::new(false),
+        };
         let evaluator = ClosureEvaluator::new(|_ws| Fitness {
             compiles: true,
             tests_passed: 1,

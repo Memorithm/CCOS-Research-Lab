@@ -95,6 +95,37 @@ jobs:
           cargo test --features octasoma --locked
           cargo run --locked --features octasoma --example octasoma_semantic
 
+      # ── CCOS_EXTENDED fused profiles (plan P6) ─────────────────────────
+      # The three-profile matrix (default | pro-default | all-full) folded into
+      # the same consolidated job so dependencies still compile once. `default`
+      # is already covered by the steps above; the byte-identity guard pins the
+      # P0 invariant that it links no premium kernel.
+      - name: Byte-identity guard (default tree pulls no premium crate)
+        run: |
+          if cargo tree --locked | grep -E 'scirust|octasoma|octacore| rsi v'; then
+            echo "the default build must not link any premium kernel crate"; exit 1
+          fi
+
+      - name: Test (pro-default — every deterministic premium tier, replay-safe)
+        run: cargo test --features pro-default --locked
+
+      - name: Test (all-full — the fully fused build incl. REPLAY-RELAX kernels)
+        run: cargo test --features all-full --locked
+
+      - name: Test (fused workspace members — scirust family, octasoma/octacore, rsi)
+        run: cargo test --locked -p scirust -p slha-mcp -p slha-c -p ccos-memory-runtime -p octasoma -p octacore -p rsi
+
+      - name: Smoke-test the premium CLI (community tier: visible refusal, exit 3)
+        run: |
+          cargo run --locked --features llm,all-full -- rsi status
+          cargo run --locked --features llm,all-full -- slha explain
+          cargo run --locked --features llm,all-full -- octa explain
+          set +e
+          cargo run --locked --features llm,all-full -- slha audit
+          code=$?
+          set -e
+          [ "$code" -eq 3 ] || { echo "community slha audit must refuse with exit 3, got $code"; exit 1; }
+
       - name: Docs
         env:
           RUSTDOCFLAGS: "-D warnings"
