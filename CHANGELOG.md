@@ -6,6 +6,17 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.4.0] — 2026-07-08 — CCOS_EXTENDED premium fusion
+
+The first CCOS_EXTENDED release: the CCOS 0.3 core fused with SLHAv2, OctaSoma
+and CERVO/RSI (plan `docs/FUSION_PLAN.md`, P0–P6 all closed; audit
+`docs/AUDIT_FUSION_2026-07.md`). The **default build's behaviour and dependency
+tree are unchanged from CCOS 0.3** — every premium kernel is opt-in
+(cargo feature) and Pro-gated (offline license); the version bump names the
+fused product.
+
 ### Added
 
 - **CCOS_EXTENDED fusion audit + P5/P6 close-out (the premium merger of CCOS +

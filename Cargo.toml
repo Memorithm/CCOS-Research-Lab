@@ -1,6 +1,11 @@
 [package]
 name = "ccos"
-version = "0.3.0"
+# 0.4.0 = the CCOS_EXTENDED premium fusion (plan §A): the CCOS 0.3 core plus the
+# vendored SLHAv2 / OctaSoma / CERVO-RSI kernels behind opt-in features. The
+# DEFAULT build's behaviour and dependency tree are unchanged from CCOS 0.3
+# (the byte-identity invariant guards the tree in CI); the bump names the
+# product, not a core change.
+version = "0.4.0"
 edition = "2021"
 license = "LicenseRef-CheckupAuto-Dual"
 # The `ccos` CLI is the primary binary. Declaring it here keeps a bare
