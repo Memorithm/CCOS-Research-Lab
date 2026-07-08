@@ -1,0 +1,345 @@
+//! CCOS elastic KV-cache manager — drives the §4 "Soft-Paging" policy over a
+//! **contiguous arena** of tiles, with three states:
+//!
+//! - **HOT**  — full tile (latent + residual), 128 B.
+//! - **WARM** — residual bitmap masked/freed (`FLAG_WARM`, `λ = 0`); the score
+//!   falls back to the coarse term. ~32 B reclaimed (logical footprint 96 B).
+//! - **COLD** — evicted from the active set; its slot is recycled on the next
+//!   `insert` (no I/O here; a real CCOS would snapshot it to the EventLog).
+//!
+//! `enforce_budget()` keeps the **logical** footprint under a byte budget by
+//! paging HOT→WARM (per [`PageOutPolicy`]) and, if needed, evicting →COLD.
+//!
+//! Note: tiles physically remain 128 B in the arena `Vec`; `live_bytes()` is the
+//! *elastic* accounting (HOT 128 / WARM 96 / COLD 0) — i.e. what a packed WARM
+//! store would occupy. Masking is O(1) (zero 32 B + flip a flag), no allocation.
+
+use crate::attention::slha_v2::{SciRustSlhaTile, D_C, FLAG_WARM, RESIDUAL_WORDS};
+
+/// Logical footprint of a full (HOT) tile.
+pub const HOT_BYTES: usize = 128;
+/// Logical footprint of a WARM tile (residual's 32 B reclaimed).
+pub const WARM_BYTES: usize = HOT_BYTES - RESIDUAL_WORDS * 8; // 96
+
+/// Soft-Paging state of a slot (spec §4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TileState {
+    Hot,
+    Warm,
+    Cold,
+}
+
+/// Order in which HOT tiles are paged out (HOT→WARM) under memory pressure.
+///
+/// Note this only governs the **paging** phase. Eviction (WARM/HOT→COLD), which
+/// only kicks in once paging the whole working set is not enough, is governed by
+/// a separate [`EvictionPolicy`] — dropping a token entirely is a harder loss
+/// than freeing its residual, so the two phases use different criteria.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PageOutPolicy {
+    /// **Hybrid (recommended, default).** Page out the lowest-`σ_E` tiles first
+    /// — their 1-bit residual matters least, so WARM is near-lossless there
+    /// (cf. §7.2) — then, if still over budget, evict the oldest by age. Best of
+    /// both: free residuals where they hurt least, drop tokens where they matter
+    /// least causally.
+    #[default]
+    LowestImpactFirst,
+    /// Pure causal: page out the oldest-inserted tiles first (causal distance,
+    /// §4). Eviction order is unchanged (also oldest-first).
+    OldestFirst,
+}
+
+/// Order in which live tiles are evicted (→COLD) once paging the whole working
+/// set to WARM is not enough (plan axis **A5** — informed eviction).
+///
+/// `σ_E` already governs the *paging* phase via [`PageOutPolicy`] (free the
+/// residual where it hurts least); this policy governs the harsher *eviction*
+/// phase (drop the token entirely). Pure-causal eviction ignores how much
+/// attention a token actually receives and destroys heavy-hitters / attention
+/// sinks. The informed alternative preserves them.
+///
+/// See: H2O (arXiv 2306.14048), StreamingLLM (2309.17453), SnapKV (2404.14469),
+/// PyramidKV (2406.02069), FastGen (2310.01801).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum EvictionPolicy {
+    /// **Causal (default, back-compatible).** Evict the oldest-inserted live
+    /// tiles first (causal distance, §4). This is the original SLHA v2 policy.
+    #[default]
+    Causal,
+    /// **Informed eviction (plan axis A5).** Evict the lowest-importance live
+    /// tiles first, but **never the attention sinks** — the first
+    /// `sink_window` tokens (by `position`, cf. StreamingLLM) are pinned and
+    /// dropped only when nothing else remains. Importance is the **cumulative
+    /// attention mass** each token has received (H2O), recorded via
+    /// [`ElasticKvCache::observe_scores`] across decoding steps. `σ_E` stays a
+    /// complementary signal through the paging phase, untouched here.
+    Importance { sink_window: usize },
+}
+
+/// Elastic KV-cache over a contiguous arena of [`SciRustSlhaTile`].
+pub struct ElasticKvCache {
+    tiles: Vec<SciRustSlhaTile>,
+    state: Vec<TileState>,
+    seq: Vec<u64>, // insertion order (paging tie-break + eviction), survives reuse
+    /// Cumulative attention mass per slot (H2O importance, plan axis A5).
+    /// Reset on (re)insert; only read by [`EvictionPolicy::Importance`].
+    importance: Vec<f32>,
+    free: Vec<usize>,
+    budget_bytes: usize,
+    policy: PageOutPolicy,
+    eviction: EvictionPolicy,
+    next_seq: u64,
+}
+
+impl ElasticKvCache {
+    pub fn new(budget_bytes: usize, policy: PageOutPolicy) -> Self {
+        Self {
+            tiles: Vec::new(),
+            state: Vec::new(),
+            seq: Vec::new(),
+            importance: Vec::new(),
+            free: Vec::new(),
+            budget_bytes,
+            policy,
+            eviction: EvictionPolicy::default(),
+            next_seq: 0,
+        }
+    }
+
+    /// Convenience constructor with the recommended default policy (the hybrid
+    /// [`PageOutPolicy::LowestImpactFirst`]: page by `σ_E`, evict by age).
+    pub fn with_budget(budget_bytes: usize) -> Self {
+        Self::new(budget_bytes, PageOutPolicy::default())
+    }
+
+    /// As [`Self::with_budget`] but with an explicit eviction policy (plan axis
+    /// A5). Use [`EvictionPolicy::Importance`] to preserve heavy-hitters and
+    /// attention sinks under pressure instead of dropping oldest-first.
+    pub fn with_eviction(budget_bytes: usize, eviction: EvictionPolicy) -> Self {
+        let mut c = Self::with_budget(budget_bytes);
+        c.eviction = eviction;
+        c
+    }
+
+    /// **First-touch NUMA hint (Linux + `numa` feature).** Pin the calling thread
+    /// to its current CPU's local NUMA node *before* bulk-inserting / warming the
+    /// arena, so the first-touch policy places the arena's pages on the local node
+    /// (avoids inter-socket traffic on multi-socket hosts). Best-effort: returns
+    /// the pinned CPU on success, or `None` if the `numa` feature is off / the
+    /// target is non-Linux / pinning failed — in which case the cache still works
+    /// correctly, just without the locality guarantee.
+    ///
+    /// Call this once, from the inference thread, right before the warm-up loop
+    /// (or before the first `insert` storm). It is a no-op allocation-wise and
+    /// safe to call multiple times. On a single-NUMA-node host (e.g. Jetson Thor)
+    /// it still pins, which avoids spurious thread migration.
+    ///
+    /// Note: the arena is a plain `Vec` (allocator-global, not page-aligned), so we
+    /// rely on first-touch rather than `mbind` (which needs page-aligned regions —
+    /// see [`crate::numa::NumaBuffer`] for the page-aligned path).
+    pub fn pin_caller_to_local_numa() -> Option<usize> {
+        crate::numa::pin_current_thread_local().ok()
+    }
+
+    /// Insert a HOT tile, reusing a recycled (COLD) slot when available. Returns
+    /// the slot id. The slot's H2O importance is (re)set to 0.
+    pub fn insert(&mut self, tile: SciRustSlhaTile) -> usize {
+        let slot = if let Some(s) = self.free.pop() {
+            self.tiles[s] = tile;
+            self.state[s] = TileState::Hot;
+            self.seq[s] = self.next_seq;
+            self.importance[s] = 0.0;
+            s
+        } else {
+            self.tiles.push(tile);
+            self.state.push(TileState::Hot);
+            self.seq.push(self.next_seq);
+            self.importance.push(0.0);
+            self.tiles.len() - 1
+        };
+        self.next_seq += 1;
+        slot
+    }
+
+    /// Cumulative attention mass (H2O importance, plan axis A5) accumulated on
+    /// `slot` via [`Self::observe_scores`]. Zero for a freshly inserted slot.
+    pub fn importance(&self, slot: usize) -> f32 {
+        self.importance[slot]
+    }
+
+    /// H2O-style importance accumulation (plan axis A5): add the softmax
+    /// attention mass of `scores` (raw logits, divided by `temperature`) to each
+    /// referenced live slot's cumulative importance. Tokens that consistently
+    /// attract attention become the heavy-hitters the
+    /// [`EvictionPolicy::Importance`] policy preserves.
+    ///
+    /// `scores` is typically the output of [`Self::score_all`]; cold slots it
+    /// references are skipped (they carry no attention once evicted).
+    pub fn observe_scores(&mut self, scores: &[(usize, f32)], temperature: f32) {
+        if scores.is_empty() {
+            return;
+        }
+        let m = scores
+            .iter()
+            .map(|&(_, s)| s)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let mut sum = 0.0f32;
+        let mut w = vec![0.0f32; scores.len()];
+        for (i, &(_, s)) in scores.iter().enumerate() {
+            w[i] = ((s - m) / temperature).exp();
+            sum += w[i];
+        }
+        // Guard against degenerate inputs that would otherwise write NaN into
+        // the importance vector: all-(-inf) scores give `m = -inf` ⇒ `s - m` =
+        // NaN; a zero temperature divides by 0 ⇒ inf/NaN. Treat both (and the
+        // empty-mass case) as a safe no-op rather than corrupting `importance`.
+        if !sum.is_finite() || sum <= 0.0 {
+            return;
+        }
+        let inv = 1.0 / sum;
+        for (i, &(slot, _)) in scores.iter().enumerate() {
+            if slot < self.importance.len() && self.state[slot] != TileState::Cold {
+                self.importance[slot] += w[i] * inv;
+            }
+        }
+    }
+
+    /// Fused attention score for a (non-COLD) slot. WARM slots return the coarse
+    /// term only (the kernel honours `FLAG_WARM`).
+    pub fn score(&self, slot: usize, q_coarse: &[f32; D_C], q_sign: &[u64; RESIDUAL_WORDS]) -> f32 {
+        self.tiles[slot].compute_score(q_coarse, q_sign)
+    }
+
+    /// Score the query against every live (non-COLD) tile: `(slot, score)`.
+    pub fn score_all(
+        &self,
+        q_coarse: &[f32; D_C],
+        q_sign: &[u64; RESIDUAL_WORDS],
+    ) -> Vec<(usize, f32)> {
+        (0..self.tiles.len())
+            .filter(|&s| self.state[s] != TileState::Cold)
+            .map(|s| (s, self.tiles[s].compute_score(q_coarse, q_sign)))
+            .collect()
+    }
+
+    pub fn state(&self, slot: usize) -> TileState {
+        self.state[slot]
+    }
+
+    /// Read-only access to the tile at `slot`. CCOS_EXTENDED's `ScirustBackend`
+    /// (the `slhav2-full` `MemoryProvider` backend in `ccos-memory-runtime`) uses
+    /// this to expose the dequantized latent + per-tile `residual_sigma` through
+    /// the runtime-neutral `CompressionResult` without re-decoding the ABI itself.
+    /// Bounds-checked in debug; the slot is always valid while `state(slot) != Cold`.
+    pub fn tile(&self, slot: usize) -> &SciRustSlhaTile {
+        &self.tiles[slot]
+    }
+
+    /// HOT → WARM: mask/free the 32-byte residual bitmap (zero it, drop λ, set
+    /// the flag). No I/O, no allocation.
+    pub fn page_out(&mut self, slot: usize) {
+        if self.state[slot] == TileState::Hot {
+            self.tiles[slot].residual_bitmap = [0u64; RESIDUAL_WORDS];
+            self.tiles[slot].dynamic_lambda = 0.0;
+            self.tiles[slot].flags |= FLAG_WARM;
+            self.state[slot] = TileState::Warm;
+        }
+    }
+
+    /// Evict a slot (→ COLD) and recycle it for a future `insert`.
+    pub fn evict(&mut self, slot: usize) {
+        if self.state[slot] != TileState::Cold {
+            self.state[slot] = TileState::Cold;
+            self.free.push(slot);
+        }
+    }
+
+    /// Elastic logical footprint: Σ over live slots (HOT 128, WARM 96, COLD 0).
+    pub fn live_bytes(&self) -> usize {
+        self.state
+            .iter()
+            .map(|s| match s {
+                TileState::Hot => HOT_BYTES,
+                TileState::Warm => WARM_BYTES,
+                TileState::Cold => 0,
+            })
+            .sum()
+    }
+
+    /// `(hot, warm, cold)` slot counts.
+    pub fn counts(&self) -> (usize, usize, usize) {
+        let mut c = (0usize, 0usize, 0usize);
+        for s in &self.state {
+            match s {
+                TileState::Hot => c.0 += 1,
+                TileState::Warm => c.1 += 1,
+                TileState::Cold => c.2 += 1,
+            }
+        }
+        c
+    }
+
+    /// Bring the logical footprint under `budget_bytes` in two phases:
+    ///
+    /// 1. **Page** HOT→WARM in [`PageOutPolicy`] order (default hybrid: lowest
+    ///    `σ_E` first — free the residual where it hurts least).
+    /// 2. If still over budget, **evict** live tiles →COLD per
+    ///    [`EvictionPolicy`]: default `Causal` (oldest first), or `Importance`
+    ///    (plan axis A5: lowest cumulative attention first, attention sinks
+    ///    pinned) — dropping a token is the harder loss.
+    pub fn enforce_budget(&mut self) {
+        if self.live_bytes() <= self.budget_bytes {
+            return;
+        }
+
+        let mut hot: Vec<usize> = (0..self.tiles.len())
+            .filter(|&s| self.state[s] == TileState::Hot)
+            .collect();
+        match self.policy {
+            PageOutPolicy::LowestImpactFirst => hot.sort_by(|&a, &b| {
+                self.tiles[a]
+                    .residual_sigma
+                    .partial_cmp(&self.tiles[b].residual_sigma)
+                    .unwrap_or(core::cmp::Ordering::Equal)
+            }),
+            PageOutPolicy::OldestFirst => hot.sort_by_key(|&s| self.seq[s]),
+        }
+        for s in hot {
+            if self.live_bytes() <= self.budget_bytes {
+                return;
+            }
+            self.page_out(s);
+        }
+
+        // Still over budget: evict live tiles per the eviction policy.
+        let mut live: Vec<usize> = (0..self.tiles.len())
+            .filter(|&s| self.state[s] != TileState::Cold)
+            .collect();
+        match self.eviction {
+            EvictionPolicy::Causal => live.sort_by_key(|&s| self.seq[s]),
+            EvictionPolicy::Importance { sink_window } => {
+                let sw = sink_window as u32;
+                // Sinks (position < sink_window) sort LAST (evicted only when
+                // nothing else remains); among the rest, lowest H2O importance
+                // first; ties broken oldest-first (causal stability).
+                live.sort_by(|&a, &b| {
+                    let sa = self.tiles[a].position < sw;
+                    let sb = self.tiles[b].position < sw;
+                    sa.cmp(&sb)
+                        .then_with(|| {
+                            self.importance[a]
+                                .partial_cmp(&self.importance[b])
+                                .unwrap_or(core::cmp::Ordering::Equal)
+                        })
+                        .then_with(|| self.seq[a].cmp(&self.seq[b]))
+                });
+            }
+        }
+        for s in live {
+            if self.live_bytes() <= self.budget_bytes {
+                return;
+            }
+            self.evict(s);
+        }
+    }
+}

@@ -1,0 +1,61 @@
+name: CI
+
+# Build + tests + clippy à chaque push sur main et chaque pull request.
+# Garde-fou anti-régression : c'est précisément l'absence de CI qui a laissé une
+# fusion de branche périmée casser `main` sans alerte. Le seuil de qualité du
+# projet est « clippy 0 warning » (cf. docs/SAFETY.md §7) — on l'impose ici via
+# `-D warnings`. Pas de garde `rustfmt` : le dépôt suit un formatage manuel
+# assumé, le seuil dur est clippy + tests.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Relance manuelle (onglet Actions → Run workflow) : utile quand l'échec
+  # venait d'un état externe (dépôt de dépendance inaccessible, réécrit…).
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Le cœur et les features testées ici sont std-only / crates publiques. Les
+  # features `scirust`/`forge`/`octasoma`/`ccos` (dépôts git CHECKUPAUTO) ne
+  # sont pas construites ici — mais ATTENTION : même non activées, cargo
+  # clone ces dépôts pour vérifier le lock sous `--locked`. La CI exige donc
+  # que ces dépôts restent PUBLICS et que les révisions épinglées dans
+  # Cargo.lock existent (un force-push amont casse la résolution — ré-épingler
+  # via `cargo update -p <dep>` le cas échéant).
+  PUBLIC_FEATURES: "wasm observability simd llm-ollama llm-claude-ureq"
+
+jobs:
+  check:
+    name: build · test · clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Toolchain Rust stable (+ clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # --- Défaut (cœur sans dépendance) ----------------------------------- #
+      # `--locked` : utilise le Cargo.lock versionné tel quel ⇒ pas de
+      # ré-résolution du manifeste, donc aucune tentative de cloner les deps git
+      # privées (forge/octasoma/ccos/scirust) non activées ici.
+      - name: Clippy (défaut) — 0 warning
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests (défaut, + doctests)
+        run: cargo test --locked
+
+      # --- Toutes les features publiques ----------------------------------- #
+      - name: Clippy (features publiques) — 0 warning
+        run: cargo clippy --all-targets --locked --features "$PUBLIC_FEATURES" -- -D warnings
+
+      - name: Tests (features publiques)
+        run: cargo test --locked --features "$PUBLIC_FEATURES"

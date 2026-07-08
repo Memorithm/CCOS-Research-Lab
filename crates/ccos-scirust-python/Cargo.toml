@@ -1,0 +1,19 @@
+[package]
+name = "slha-python"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.89"
+authors = ["Forge CHECKUPAUTO <forge@checkupauto.io>"]
+description = "Python bindings for SLHA v2 kernel."
+license = "PolyForm-Noncommercial-1.0.0"
+
+[lib]
+name = "slha_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+scirust = { version = "0.2", path = "../ccos-scirust" }
+pyo3 = { version = "0.23", features = ["extension-module"] }
+
+[build-dependencies]
+pyo3-build-config = "0.23"

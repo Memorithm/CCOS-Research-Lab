@@ -1,0 +1,26 @@
+# slha-mcp — Model Context Protocol (stdio) server for SLHA v2.
+#
+# Zero EXTERNAL dependencies: the only dependency is the in-repo `scirust` crate,
+# whose `json` module provides all JSON-RPC (de)serialization. The MCP server
+# therefore inherits SLHA v2's zero-dependency property.
+[package]
+name = "slha-mcp"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.89"
+license = "PolyForm-Noncommercial-1.0.0"
+description = "MCP (Model Context Protocol) stdio server exposing the SLHA v2 kernel and self-audit to LLM agents — zero external dependencies."
+repository = "https://github.com/CHECKUPAUTO/SLHAv2"
+homepage = "https://github.com/CHECKUPAUTO/SLHAv2"
+readme = "../docs/MCP.md"
+keywords = ["mcp", "llm", "agent", "kv-cache", "attention"]
+categories = ["command-line-utilities", "science"]
+
+[dependencies]
+# `version` makes this publish-ready once `scirust` is on crates.io; `path` is
+# used for local/workspace builds (cargo strips the path on publish).
+scirust = { version = "0.2", path = "../ccos-scirust" }
+
+[[bin]]
+name = "slha-mcp"
+path = "src/main.rs"

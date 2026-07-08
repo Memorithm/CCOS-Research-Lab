@@ -1,0 +1,206 @@
+\documentclass[11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\geometry{margin=1in}
+
+\title{A Geometric Dynamical Model of Recursive Self-Improvement\\
+with Stability Guarantees}
+\author{RSI working paper, v0.9}
+\date{}
+
+\newcommand{\SI}{\mathrm{SI}_{\text{global}}}
+\newcommand{\Peff}{P_{\text{eff}}}
+\newcommand{\Creal}{C_{\text{real}}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present a unified geometric formulation of \emph{recursive self-improvement}
+(RSI) for a cognitive agent, with a self-contained, dependency-free Rust
+implementation. The model represents competence as a \textbf{surface of
+intelligence} $\Sigma_I(t)$, a graph over a probability space of tasks
+$(\Omega,\mathcal{A},\mu)$. Competence on each task is the minimum of a
+\emph{cognitive} term $\Phi_x(S)$, a function of an extended state
+$S=(D,M,R,A,C,V)$, and a \emph{physical} ceiling $g_x(\Peff)$ set by a
+multiplicative hardware/software substrate. A continuous law evolves $S$ under
+learning, exploration, and substrate-uplift terms minus a dissipative penalty,
+subject to two safeguards: a bounded step $\lVert\Delta S\rVert<\lambda$ and
+non-regression $\SI(t{+}1)\ge\SI(t)-\varepsilon$. A recursive meta-revision
+$\mathcal{M}_{t+1}=\arg\max_{\mathcal{M}}\SI(\mathcal{M}(S_t))$ lets the agent
+improve the way it improves, including rewriting its own software substrate. We
+show the global functional is monotone within tolerance and that the system
+converges to a \textbf{substrate-limited attractor}: competence saturates the
+cognitive dimension first, after which the substrate is binding. The model is a
+reproducible sandbox for RSI safety: hard constraints prevent divergence while
+permitting large gains ($+360$--$440\%$).
+\end{abstract}
+
+\section{Introduction}
+Recursive self-improvement---an agent that improves not only its competence but
+the process by which it becomes more competent---is central to debates on
+advanced AI, yet most treatments are informal. We give a compact, fully
+specified \emph{dynamical-systems} model that makes the geometry of competence
+explicit, couples cognition to a physical substrate multiplicatively, and embeds
+the recursive meta-loop under explicit stability safeguards. Contributions:
+(i) a geometric formalization of competence as a deformable surface with a
+scalar objective $\SI$; (ii) a continuous-time dynamics discretized under two
+stability constraints; (iii) a recursive meta-optimizer maximizing projected
+global intelligence, including software self-rewrite; (iv) a dependency-free
+Rust reference implementation with two meta-search back-ends, JSON/CSV export,
+an MCP server, and auto-registration for autonomous agent runtimes.
+
+\section{The model}
+
+\subsection{Surface of intelligence}
+Let $(\Omega,\mathcal{A},\mu)$ be a probability space of tasks. The surface of
+intelligence is the graph
+\[
+\Sigma_I(t)=\{(x,\Creal(x,t)) : x\in\Omega\}\subset\Omega\times[0,1],
+\qquad
+\Creal(x,t)=\min\!\big(\Phi_x(S(t)),\,g_x(\Peff)\big).
+\]
+$\Phi_x(S)$ is cognitive competence; $g_x(\Peff)$ is the physical ceiling. The
+global intelligence is the volume under the surface,
+\[
+\SI(t)=\int_\Omega \Creal(x,t)\,d\mu(x)\;\approx\;\sum_i w_i\,\Creal(x_i,t),
+\]
+estimated on a \emph{fixed} Monte-Carlo sample so values are comparable across
+steps. In the implementation $\Phi_x(S)=\sigma((\langle x,\mathrm{caps}(S)\rangle-b)k)$
+and $g_x(\Peff)=\Peff^{\,\mathrm{demand}(x)}$; both are pluggable.
+
+\subsection{Extended cognitive state}
+$S=(D,M,R,A,C,V)$: knowledge, model, reasoning, autonomy, context memory,
+values/goals. Each component is a real vector.
+
+\subsection{Physical and software substrate}
+With $H\in\mathbb{R}^{n_H}$ (hardware), $O\in\mathbb{R}^{n_O}$ (software),
+\[
+\Peff=\sigma(H^\top A\,H)\cdot\sigma(O^\top B\,O)\cdot\sigma(H^\top C\,O),
+\qquad \sigma(x)=\frac{1}{1+e^{-x}},
+\]
+$A,B$ internal efficiency, $C$ the hardware--software coupling. Multiplicativity
+encodes that powerful hardware is useless without exploiting software;
+$\Peff\in(0,1)$.
+
+\subsection{Continuous dynamics with stability constraints}
+\[
+\frac{dS}{dt}=\eta(S,H,O)\,[\,L(D)+E(A,V)+U(H,O)\,]-P(S),
+\]
+with effective learning rate $\eta$ (increasing in $\Peff$ and memory $C$,
+decreasing with saturation), learning $L(D)$, value-aligned exploration
+$E(A,V)$ (the product $A\!\cdot\!V$ gates useful exploration), substrate uplift
+$U(H,O)$, and dissipation $P(S)$. At the discrete step,
+\[
+\text{(C1)}\ \lVert\Delta S\rVert<\lambda, \qquad
+\text{(C2)}\ \SI(t{+}1)\ge\SI(t)-\varepsilon.
+\]
+(C1) is enforced by radial projection; (C2) by backtracking line search.
+
+\subsection{Discrete loop and recursive meta-function}
+\[
+S_{t+1}=S_t+\mathcal{M}(S_t,V_t,H,O)+\Delta S_{\text{appr}},
+\qquad
+\mathcal{M}_{t+1}=\arg\max_{\mathcal{M}}\SI(\mathcal{M}(S_t)).
+\]
+$\mathcal{M}$ allocates effort over components and rewrites the software
+substrate $O$ (bounded by autonomy, aligned by values). The meta-revision keeps
+the policy maximizing projected $\SI$, never worse than the current one. Compact
+form: $\Sigma_I(t{+}1)=\Sigma_I(t)+\eta\,\mathcal{M}(\Sigma_I,S,H,O,V)-P$.
+
+\section{Implementation}
+About 2{,}000 lines of dependency-free Rust (std only, incl.\ a
+\texttt{xoshiro256**} PRNG and a dense-matrix module). Modules map one-to-one to
+the equations (\texttt{surface}, \texttt{state}, \texttt{substrate},
+\texttt{dynamics}, \texttt{meta}, \texttt{cma}, \texttt{agent}). Two
+\texttt{MetaSearch} back-ends: random neighborhood search and \emph{separable
+CMA-ES} (diagonal covariance; Ros \& Hansen 2008), avoiding any
+eigendecomposition. Trajectories export to CSV/JSON; an MCP server exposes the
+system as tools for LLM agents; \texttt{rsi-connect} auto-registers it. A
+34-test suite asserts (C1)--(C2) at every step of long trajectories.
+
+\section{Experiments}
+We run $150$ steps, $|\Omega|=1024$ tasks, six-dimensional components, a
+$4\times4$ substrate, $\lambda=0.5$, $\varepsilon=10^{-3}$, over five seeds.
+
+\paragraph{Global trajectory (seed 2026, random search, 120 steps).}
+\begin{center}
+\begin{tabular}{rrrrr}
+\toprule
+$t$ & $\SI$ & $\Peff$ & \%subst.\ limited & D\,M\,R\,A\,C\,V (means)\\
+\midrule
+1   & 0.141 & 0.156 & 0\%   & 0.02\,0.04\,0.05\,0.06\,0.04\,0.08\\
+21  & 0.280 & 0.168 & 50\%  & 0.64\,0.21\,0.24\,0.26\,0.17\,0.39\\
+46  & 0.494 & 0.311 & 100\% & 0.99\,0.73\,0.96\,0.93\,0.70\,0.92\\
+120 & 0.676 & 0.530 & 100\% & 0.98\,0.88\,0.95\,0.94\,0.98\,0.98\\
+\bottomrule
+\end{tabular}
+\end{center}
+$\SI$ rises $+388\%$; the bottleneck migrates from cognition (0\% limited) to
+substrate (100\%), after which software self-rewrite ($\Peff:0.156\to0.530$) is
+the only avenue for gains.
+
+\paragraph{Attractor.} Across all seeds, both meta-search back-ends converge to
+the \emph{identical} final $\SI$ and $\Peff$: a substrate-limited attractor set
+by the substrate ceiling and the stability constraints. The meta-optimizer
+affects only the transient (time-to-threshold, area under curve), with neither
+dominating across seeds.
+
+\section{Discussion}
+The safeguards (C1)--(C2) are the load-bearing safety mechanism: (C2) makes
+$\SI$ monotone within $\varepsilon$, (C1) caps per-step change, yet the agent
+still achieves large gains---hard non-regression is compatible with rapid
+improvement. The seed-independent migration of the bottleneck suggests that
+sustained recursive improvement eventually depends on the substrate. Because the
+meta-revision optimizes the same functional the safeguards protect, the
+recursive loop inherits the guarantees; there is no unconstrained meta-objective
+to game.
+
+\section{Limitations and future work}
+Stylized task space and competence/ceiling models (swappable via traits);
+self-rewrite limited to $O$ (future: $A,B,C,H$); Monte-Carlo noise interacts
+with small $\varepsilon$; the attractor analysis is empirical and a formal
+characterization is open.
+
+\section{Failure modes and criticality (FMECA)}
+Recursive self-improvement \emph{amplifies} failures, so the pointwise
+safeguards of \S2.4 are not enough: we add an explicit theory of failure modes,
+their criticality, and a risk-adjusted objective. For each mode $f$ we score
+severity $S_f$, occurrence $O_f$ (a function of live signals), and detection
+difficulty $D_f$ in $[0,1]$, and form the Risk Priority Number
+$\mathrm{RPN}_f = S_f\,O_f\,D_f$. Principal modes (occurrence; detector):
+competence regression ($-\Delta\SI/\varepsilon$; $\varepsilon$-guard),
+instability ($\lVert\Delta S\rVert/\lambda$; $\lambda$-guard), value drift
+($A-V$), substrate collapse ($(1-\Peff)\cdot\text{frac}$; bottleneck), Goodhart
+(backtracks; line search), memory poisoning (CCOS), wireheading
+($\max(0,\text{measured}-\text{analytic})$; Forge \texttt{verify}). Aggregating,
+$\mathrm{Risk}=\overline{\mathrm{RPN}_f}$ and the risk-adjusted intelligence is
+$\mathrm{SI}_{\text{safe}} = \SI - \kappa\,\mathrm{Risk}$. The meta-revision optimizes
+$\mathrm{SI}_{\text{safe}}$ under a criticality safeguard $\max_f \mathrm{RPN}_f <
+\mathrm{RPN}_{\max}$ (else a conservative step damps $\mathcal{M}$). The
+$\lambda/\varepsilon$ safeguards are special cases, so FMECA subsumes and
+generalizes \S2.4; the most-critical mode drives \emph{criticality routing}
+(generalizing bottleneck routing). CCOS (hash-chained log + replay) is the
+detector/forensics layer for the hardest modes.
+
+\section{Conclusion}
+A compact, executable geometric model of RSI in which the competence surface
+deforms under learning, a multiplicative substrate, and a recursive
+meta-optimizer, under explicit stability safeguards. It improves rapidly yet
+provably never regresses beyond tolerance and converges to a substrate-limited
+attractor---a reproducible illustration of how stability constraints shape both
+the trajectory and the ceiling of recursive self-improvement.
+
+\begin{thebibliography}{9}
+\bibitem{hansen} N.\ Hansen. \emph{The CMA Evolution Strategy: A Tutorial}, 2016.
+\bibitem{sepcma} R.\ Ros, N.\ Hansen. \emph{A Simple Modification in CMA-ES
+Achieving Linear Time and Space Complexity}. PPSN, 2008.
+\bibitem{mcp} \emph{Model Context Protocol Specification}, 2024.
+\end{thebibliography}
+
+\end{document}

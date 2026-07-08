@@ -1,0 +1,136 @@
+[package]
+name = "rsi"
+version = "0.10.0"
+edition = "2021"
+description = "Recursive Self-Improvement — implémentation Rust du système géométrique unifié (v9)"
+# Double licence (cf. LICENSING.md) : gratuit en usage non commercial sous
+# PolyForm-Noncommercial-1.0.0, licence commerciale séparée sinon. L'expression
+# SPDX « A OR B » reflète le choix laissé à l'utilisateur (LicenseRef pour la
+# licence commerciale, hors liste SPDX standard).
+license = "PolyForm-Noncommercial-1.0.0 OR LicenseRef-Commercial"
+authors = ["Tarek Zekriti / CHECKUPAUTO"]
+repository = "https://github.com/CHECKUPAUTO/RSI"
+homepage = "https://github.com/CHECKUPAUTO/RSI"
+documentation = "https://github.com/CHECKUPAUTO/RSI/tree/main/docs"
+readme = "README.md"
+keywords = ["rsi", "self-improvement", "optimization", "agent", "llm"]
+categories = ["science", "simulation"]
+
+[[bin]]
+name = "rsi-full"
+path = "src/bin/rsi_full.rs"
+required-features = ["forge", "octasoma"]
+
+[lib]
+name = "rsi"
+path = "src/lib.rs"
+
+# Le cœur reste sans dépendance ; les backends réels sont optionnels.
+[features]
+default = []
+# Méta-optimiseur ℳ et substrat P_eff adossés au moteur Forge (exécution réelle).
+forge = ["dep:forge-core", "dep:rand", "dep:serde"]
+# Mémoire contextuelle C adossée au moteur de mémoire fractale OctaSoma.
+octasoma = ["dep:octasoma"]
+# CCOS_EXTENDED (plan P3): the `ccos` cargo feature is GONE (circular-dep
+# inversion). The CCOS audit bridge (`CcosAudit`, rsi's `AuditLog` over CCOS's
+# hash-chained `EventLog`) now lives on the CCOS side in `src/rsi_bridge.rs`,
+# behind the ROOT `ccos` crate's `rsi` feature. This crate has no edge on `ccos`.
+# Moteur d'ascension réel `scirust-rsi` (dépendance git CHECKUPAUTO/scirust).
+# Voir SCIRUST_ACTIVATION.md. Activer avec : --features scirust.
+scirust = ["dep:scirust-rsi", "dep:rand"]
+# Backend LLM local Ollama (client HTTP minimal sur std::net, sans dépendance).
+# Active OllamaClient pour brancher un modèle local (http://localhost:11434).
+llm-ollama = []
+# Backend LLM Claude (API Anthropic Messages). std-only : la logique (requête /
+# parsing) est sans dépendance ; le transport HTTPS/TLS est injecté par l'hôte
+# (trait ClaudeTransport), car std n'offre pas de TLS.
+llm-claude = []
+# Transport HTTPS turnkey pour Claude via `ureq` (bloquant, rustls). Fournit
+# UreqTransport prêt à l'emploi. Nécessite le réseau (api.anthropic.com).
+llm-claude-ureq = ["llm-claude", "dep:ureq"]
+# Domaine WASM : exécution RÉELLE de code candidat en bac à sable (wasmi, pur
+# Rust, déterministe, avec fuel + zéro import host). 4e point du spectre
+# texte→config→code. Le LLM propose du WebAssembly textuel (WAT).
+wasm = ["dep:wasmi", "dep:wat"]
+# Observabilité : émission d'événements structurés via `tracing` (l'hôte attache
+# son subscriber). Sans la feature, les points d'instrumentation sont des no-ops
+# (le cœur reste std-only). Les métriques Prometheus (commande `metrics`) sont,
+# elles, toujours disponibles et sans dépendance.
+observability = ["dep:tracing"]
+# SIMD : vectorise les réductions linalg (dot/mean) via `wide` (stable, sûr).
+# ⚠️ Relâche la repro BIT-EXACTE *cross-build* (l'ordre de sommation change) ;
+# le déterminisme reste intact À L'INTÉRIEUR d'un build SIMD. OFF par défaut.
+simd = ["dep:wide"]
+
+[dependencies]
+forge-core = { git = "https://github.com/CHECKUPAUTO/forge", optional = true }
+# CCOS_EXTENDED: repointed from the git dep to the vendored workspace member
+# (`crates/ccos-octasoma`) — air-gap: no network fetch. Same package name `octasoma`,
+# same v0.4.0, so the `octasoma` feature's API is unchanged.
+octasoma = { path = "../ccos-octasoma", optional = true }
+rand = { version = "0.8", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+scirust-rsi = { git = "https://github.com/CHECKUPAUTO/scirust", optional = true }
+ureq = { version = "2", optional = true }
+wasmi = { version = "0.31", optional = true }
+wat = { version = "1", optional = true }
+tracing = { version = "0.1", optional = true }
+wide = { version = "0.7", optional = true }
+
+[[bin]]
+name = "rsi-demo"
+path = "src/main.rs"
+
+[[bin]]
+name = "rsi-mcp"
+path = "src/bin/rsi_mcp.rs"
+
+[[bin]]
+name = "rsi-connect"
+path = "src/bin/rsi_connect.rs"
+
+[[bin]]
+name = "rsi-ablate"
+path = "src/bin/rsi_ablate.rs"
+
+[[bin]]
+name = "rsi-loopbench"
+path = "src/bin/rsi_loopbench.rs"
+
+[[bin]]
+name = "rsi-refine"
+path = "src/bin/rsi_refine.rs"
+
+# Boucle d'auto-amélioration empirique (DGM/STOP) sur un dépôt réel. Backend LLM
+# local Ollama requis ; Claude optionnel via --features llm-claude-ureq.
+[[bin]]
+name = "rsi-dgm"
+path = "src/bin/rsi_dgm.rs"
+required-features = ["llm-ollama"]
+
+# Addon papers-agent : papier scientifique → objectifs DGM directifs → preuves
+# empiriques (dry-run strict). Cf. docs/ADDONS.md et docs/PAPERS_SYNERGY.md.
+[[bin]]
+name = "rsi-scholar"
+path = "src/bin/rsi_scholar.rs"
+required-features = ["llm-ollama"]
+
+# Calibration du pré-crible simulé (world model Qwen-AgentWorld × gate DGM).
+# Cf. docs/AGENTWORLD_STUDY.md.
+[[bin]]
+name = "rsi-simcal"
+path = "src/bin/rsi_simcal.rs"
+required-features = ["llm-ollama"]
+
+# Ascension auto-améliorante pilotée par LLM (ascend_llm + LlmGuard) sur les
+# domaines std-only synthesis/prompt/tuning. Backend Ollama local.
+[[bin]]
+name = "rsi-ascend"
+path = "src/bin/rsi_ascend.rs"
+required-features = ["llm-ollama"]
+
+# CCOS_EXTENDED: per-member `[profile.release]` blocks are ignored by Cargo
+# (profiles must live at the workspace root). A release profile is defined at
+# the workspace root if needed; this block was removed to silence the ignore
+# warning.

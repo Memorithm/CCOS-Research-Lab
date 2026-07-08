@@ -1,0 +1,40 @@
+[package]
+name = "octacore"
+version = "0.1.0"
+edition = "2024"
+license = "LicenseRef-CheckupAuto-Dual"
+description = "Intelligent assembly of the CHECKUPAUTO memory triad (CCOS causal + OctaSoma semantic + SLHAv2 attention) into one cascade."
+repository = "https://github.com/Memorithm/CCOS_EXTENDED"
+
+# CCOS_EXTENDED: this crate is now a workspace member (vendored from
+# octasoma/octacore). The standalone `[workspace]` table is gone so it joins the
+# CCOS_EXTENDED workspace. The octasoma dep points to the vendored member.
+#
+# P2 (circular-dep inversion): the `ccos` git dependency and the `ccos_adapter`
+# module are GONE. The `CcosScope` adapter now lives on the CCOS side
+# (`src/octacore_bridge.rs`, behind the root `octacore` feature) — CCOS depends on
+# `octacore`, not the reverse, so there is no circular edge. This crate therefore
+# has NO path/git dependency on CCOS and never fetches it.
+[dependencies]
+octasoma = { path = "../ccos-octasoma" }
+
+# Optional real-system adapter (built only with the matching feature):
+scirust = { path = "../ccos-scirust", optional = true }
+
+# Optional MCP server (the `octacore-mcp` binary): newline-delimited JSON-RPC over
+# stdio so any MCP client (Claude Desktop, ...) can drive the cascade.
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[features]
+default = []
+# Visualise SLHAv2 KV-cache tiles through OctaSoma (the lens, not attention routing).
+slha = ["dep:scirust"]
+# Expose the cascade to AI agents over the Model Context Protocol (stdio).
+mcp = ["dep:serde", "dep:serde_json"]
+
+# The MCP server binary is built only with `--features mcp`.
+[[bin]]
+name = "octacore-mcp"
+path = "src/bin/octacore-mcp.rs"
+required-features = ["mcp"]

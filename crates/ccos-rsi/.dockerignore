@@ -1,0 +1,16 @@
+# Contexte de build minimal : seuls Cargo.toml + src/ sont nécessaires au
+# build du cœur (le Dockerfile ne COPIE que ces chemins, mais on exclut tout
+# le reste pour garder le contexte léger et le build reproductible).
+/target
+/.git
+/.env
+/docs
+/paper
+/examples
+/tests
+/scripts
+*.md
+*.sled
+forge_checkpoint.json
+rsi_full_trajectory.*
+**/*.rs.bk

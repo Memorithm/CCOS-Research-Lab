@@ -1,0 +1,22 @@
+/target
+**/*.rs.bk
+# Cargo.lock est VERSIONNÉ (et non ignoré) : le projet produit des binaires et
+# dépend de crates git PRIVÉES (forge/octasoma/ccos/scirust). Sans lock, un
+# `cargo` frais (CI, Docker) doit résoudre tout le manifeste et tente de cloner
+# ces dépôts privés ⇒ échec d'authentification. Le lock épinglé évite cette
+# résolution pour les builds qui n'activent pas ces features.
+
+# artefacts Forge (checkpoints sled)
+forge_checkpoint.json
+*.sled
+
+# artefacts de la démo rsi-full
+rsi_full_trajectory.*
+
+# secrets locaux (cf. .env.example) — ne jamais committer
+.env
+
+# artefacts d.execution des boucles (jamais versionnes) : backups DGM, scholar, simcal
+/.rsi_backups/
+/.rsi_scholar/
+/.rsi_simcal_report.md

@@ -1,0 +1,25 @@
+[package]
+name = "ccos-memory-runtime"
+version = "0.1.0"
+edition = "2021"
+description = "Neutral cognitive-memory middleware: MemoryProvider trait + self-contained SLHAv2 tile backend. Zero dependencies (no scirust) by default; opt-in slhav2-full links the real scirust kernel."
+license = "LicenseRef-CheckupAuto-Dual"
+
+# Intentionally ZERO dependencies in the default build. The SLHAv2 tile is a
+# 128-byte ABI decoded with minimal in-crate grouped-INT4 logic, so neither CCOS
+# nor this crate ever depends on `scirust` by default -- not even as an optional
+# dep (an optional dep would still pull `scirust` into CCOS's resolution graph).
+#
+# CCOS_EXTENDED adds the opt-in `slhav2-full` feature: it links the REAL
+# `ccos-scirust` kernel (SIMD `compute_score`, `ElasticKvCache` HOT/WARM/COLD
+# soft-paging, `LatentSafetyGuard`) as a second `MemoryProvider` backend
+# (`ScirustBackend`). This is a REPLAY-RELAX feature (SIMD accumulation order +
+# the elastic cache's runtime-stateful importance tracking break bit-exact
+# replay), so it is OFF by default -- the default and `slhav2` (distilled) builds
+# stay `scirust`-free and `replay == live`. See docs/DETERMINISM.md.
+[dependencies]
+ccos-scirust = { path = "../ccos-scirust", package = "scirust", optional = true }
+
+[features]
+# Link the real scirust kernel as a `MemoryProvider` backend. OFF by default.
+slhav2-full = ["dep:ccos-scirust"]
