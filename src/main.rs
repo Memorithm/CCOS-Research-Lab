@@ -193,6 +193,15 @@ fn run_doctor(opts: &DoctorOpts) -> CliResult {
     let f_syn = cfg!(feature = "syn-parser");
     let f_learned = cfg!(feature = "learned-embed");
     let f_mimalloc = cfg!(feature = "mimalloc");
+    // CCOS_EXTENDED fusion features — a premium deployment's first question is
+    // "did my build actually compile the kernel I licensed?".
+    let f_slhav2 = cfg!(feature = "slhav2");
+    let f_slhav2_full = cfg!(feature = "slhav2-full");
+    let f_octasoma = cfg!(feature = "octasoma");
+    let f_octacore = cfg!(feature = "octacore");
+    let f_rsi = cfg!(feature = "rsi");
+    let f_rsi_dgm = cfg!(feature = "rsi-dgm");
+    let f_signed_sync = cfg!(feature = "signed-sync");
     let pq_key_set = ccos::license::embedded_slh_dsa_key_is_set();
     let any_verifier = f_license || f_license_pq;
     let any_key_set = key_set || pq_key_set;
@@ -243,6 +252,9 @@ fn run_doctor(opts: &DoctorOpts) -> CliResult {
             "features": {
                 "llm": f_llm, "license": f_license, "license-pq": f_license_pq,
                 "syn-parser": f_syn, "learned-embed": f_learned, "mimalloc": f_mimalloc,
+                "signed-sync": f_signed_sync, "slhav2": f_slhav2,
+                "slhav2-full": f_slhav2_full, "octasoma": f_octasoma,
+                "octacore": f_octacore, "rsi": f_rsi, "rsi-dgm": f_rsi_dgm,
             },
             "parser": if f_syn { "syn-ast" } else { "line-heuristic" },
             "license": {
@@ -281,13 +293,23 @@ fn run_doctor(opts: &DoctorOpts) -> CliResult {
         }
     );
     println!(
-        "  features     llm={} license={} license-pq={} syn-parser={} learned-embed={} mimalloc={}",
+        "  features     llm={} license={} license-pq={} syn-parser={} learned-embed={} mimalloc={} signed-sync={}",
         yn(f_llm),
         yn(f_license),
         yn(f_license_pq),
         yn(f_syn),
         yn(f_learned),
-        yn(f_mimalloc)
+        yn(f_mimalloc),
+        yn(f_signed_sync)
+    );
+    println!(
+        "  premium      slhav2={} slhav2-full={} octasoma={} octacore={} rsi={} rsi-dgm={}",
+        yn(f_slhav2),
+        yn(f_slhav2_full),
+        yn(f_octasoma),
+        yn(f_octacore),
+        yn(f_rsi),
+        yn(f_rsi_dgm)
     );
     println!(
         "  mcp          {}",

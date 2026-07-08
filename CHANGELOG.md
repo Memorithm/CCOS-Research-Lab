@@ -6,7 +6,23 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- **Documentation refresh (post-0.4.0 doc audit)** — the user-facing docs now
+  match the fused product: `docs/DEPLOYMENT.md` (0.4.0 doctor sample, the full
+  feature table incl. every fusion feature + the `pro-default`/`all-full`
+  bundles and premium build commands, `CCOS_LICENSE_FILE` in the license
+  resolution order, §4c now lists all **9** Pro features);
+  `docs/MEMORY_INTERFACE.md` (the MCP catalogue: the sixteen core tools incl.
+  `get`/`sync`, plus the Pro `slha.*`/`octa.*`/`rsi.*` namespaces) and the
+  matching README §3 count; `LICENSING.md` (new §2b separating the *copyright
+  license* from the *Pro runtime token*); `CONTRIBUTING.md` (the real fusion CI
+  matrix, premium dev-loop commands); `docs/ARCHITECTURE.md` (the fused
+  premium modules/crates map); CHANGELOG compare links; a ROADMAP pointer to
+  the fusion plan. `ccos doctor` additionally reports the compiled **premium**
+  features (`slhav2`/`slhav2-full`/`octasoma`/`octacore`/`rsi`/`rsi-dgm`,
+  plus `signed-sync`) in both text and JSON output, so a premium deployment can
+  verify at a glance that its build compiled the kernels it licensed.
 
 ## [0.4.0] — 2026-07-08 — CCOS_EXTENDED premium fusion
 
@@ -1368,4 +1384,5 @@ fused product.
 - Unbounded edge leak, guard prefix-bypass, non-deterministic eviction, and
   `max_nesting_depth` enforcement (see [`ROADMAP.md`](ROADMAP.md) → *Done*).
 
-[Unreleased]: https://github.com/CHECKUPAUTO/CCOS/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Memorithm/CCOS_EXTENDED/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Memorithm/CCOS_EXTENDED/compare/v0.3.0...v0.4.0
