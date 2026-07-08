@@ -63,7 +63,9 @@ fn egress_default_is_localhost_only() {
     assert!(al.is_allowed("http://[::1]:11434/"));
     assert!(al.is_allowed("https://localhost/"));
     // A public host is refused — air-gap: no off-host call is possible.
-    let err = al.check("https://api.anthropic.com/v1/messages").unwrap_err();
+    let err = al
+        .check("https://api.anthropic.com/v1/messages")
+        .unwrap_err();
     match err {
         EgressError::HostNotAllowed { host, .. } => assert_eq!(host, "api.anthropic.com"),
         EgressError::Malformed(_) => panic!("expected HostNotAllowed for a public host"),
@@ -75,7 +77,9 @@ fn egress_default_denies_remote_ollama_too() {
     // The Ollama provider in eval.rs defaults to a *local* endpoint, but a
     // remote OLLAMA_ENDPOINT must be refused under the default policy.
     let al = EgressAllowlist::localhost_only();
-    assert!(al.check("http://gpu-box.internal:11434/api/generate").is_err());
+    assert!(al
+        .check("http://gpu-box.internal:11434/api/generate")
+        .is_err());
 }
 
 #[test]
@@ -120,7 +124,10 @@ fn replay_table_is_total_and_consistent() {
         );
         if *posture == Replay::Relax {
             assert!(
-                matches!(community.require(*feature, NOW), Err(LicenseError::FeatureLocked(_))),
+                matches!(
+                    community.require(*feature, NOW),
+                    Err(LicenseError::FeatureLocked(_))
+                ),
                 "relaxed feature {:?} is not Pro-gated — violates replay == live",
                 feature
             );
@@ -138,9 +145,18 @@ fn pro_unlocks_replay_relax_features() {
     // `License` value; instead assert the table's relaxed set is non-empty and
     // that community denies them (covered above) — the unlock direction is
     // exercised in the feature-gated fusion tests (fusion_slha_full, rsi_bridge).
-    let relaxed: Vec<_> = REPLAY_TABLE.iter().filter(|(_, p)| *p == Replay::Relax).collect();
-    assert!(!relaxed.is_empty(), "there must be at least one REPLAY-RELAX feature");
+    let relaxed: Vec<_> = REPLAY_TABLE
+        .iter()
+        .filter(|(_, p)| *p == Replay::Relax)
+        .collect();
+    assert!(
+        !relaxed.is_empty(),
+        "there must be at least one REPLAY-RELAX feature"
+    );
     for (f, _) in &relaxed {
-        assert!(matches!(*f, Feature::SlhAv2FullKernel | Feature::RsiSelfImprovement | Feature::RsiDgm));
+        assert!(matches!(
+            *f,
+            Feature::SlhAv2FullKernel | Feature::RsiSelfImprovement | Feature::RsiDgm
+        ));
     }
 }

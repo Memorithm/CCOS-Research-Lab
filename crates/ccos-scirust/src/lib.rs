@@ -20,14 +20,14 @@
 // These are numeric kernels: indexing parallel arrays and matvec rows by
 // position reads closer to the math than iterator-chain rewrites would.
 #![allow(clippy::needless_range_loop)]
-
 // Security posture (CCOS_EXTENDED plan P4): `unsafe` is DENIED by default at
 // the crate root. It is ALLOWED only in the two audited modules that genuinely
 // need it, each with a documented justification:
 //   - `numa.rs`        : aligned allocation (`std::alloc`) + the optional NUMA
 //                       policy (`libc` mmap/mbind/sched_setaffinity), the latter
 //                       gated behind the default-off `numa` feature. Every
-//                       `unsafe` block carries a `// SAFETY:` comment.
+//                       `unsafe` block carries a `// SAFETY:` comment (and every
+//                       `unsafe fn` a `# Safety` contract).
 //   - `attention/slha_v2.rs` : the runtime-dispatched AVX2/AVX512/NEON SIMD
 //                       kernels, each `#[target_feature]`-gated and called only
 //                       behind runtime feature detection, with a portable
@@ -41,6 +41,7 @@ pub mod adapter;
 pub mod attention;
 pub mod audit;
 pub mod ccos;
+pub mod eventlog;
 pub mod incoherence;
 pub mod json;
 pub mod learned;

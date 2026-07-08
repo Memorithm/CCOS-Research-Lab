@@ -484,9 +484,7 @@ pub fn ollama_installed_models(
         .map_err(|e| LlmError::Backend(format!("connexion Ollama {addr}: {e}")))?;
     stream.set_read_timeout(Some(timeout)).ok();
     stream.set_write_timeout(Some(timeout)).ok();
-    let req = format!(
-        "GET /api/tags HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n"
-    );
+    let req = format!("GET /api/tags HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
     stream
         .write_all(req.as_bytes())
         .map_err(|e| LlmError::Backend(format!("écriture: {e}")))?;
@@ -503,7 +501,11 @@ fn parse_tags_response(raw: &str) -> Result<Vec<String>, LlmError> {
     let (headers, body) = raw
         .split_once("\r\n\r\n")
         .ok_or_else(|| LlmError::Backend("réponse HTTP sans corps".to_string()))?;
-    let body = if header_is_chunked(headers) { dechunk(body) } else { body.to_string() };
+    let body = if header_is_chunked(headers) {
+        dechunk(body)
+    } else {
+        body.to_string()
+    };
     let json = crate::json::Json::parse(body.trim())
         .map_err(|e| LlmError::Backend(format!("JSON /api/tags invalide: {e}")))?;
     let models = json
@@ -1104,7 +1106,11 @@ mod tests {
             ..LlmGuard::default()
         };
         let (_best, report) = ascend_llm(&mut task, 0, &client, &guard);
-        assert!(report.llm_calls <= 3, "budget d'appels dépassé: {}", report.llm_calls);
+        assert!(
+            report.llm_calls <= 3,
+            "budget d'appels dépassé: {}",
+            report.llm_calls
+        );
         assert_eq!(report.stop, LlmStop::BudgetExhausted);
     }
 
@@ -1128,7 +1134,10 @@ mod tests {
         let mut task = NumberGame { target: 10 };
         // mock qui ne propose jamais rien ⇒ LlmError::Empty
         let client = MockLlmClient::new(|_p, _k| Vec::new());
-        let guard = LlmGuard { max_iters: 5, ..LlmGuard::default() };
+        let guard = LlmGuard {
+            max_iters: 5,
+            ..LlmGuard::default()
+        };
         let (best, report) = ascend_llm(&mut task, 3, &client, &guard);
         assert_eq!(best, 3, "incumbent inchangé sans proposition valide");
         assert!(report.is_monotone());
@@ -1140,7 +1149,11 @@ mod tests {
         let run = || {
             let mut task = NumberGame { target: 23 };
             let client = neighbor_client();
-            let guard = LlmGuard { target: Some(0.0), max_iters: 100, ..LlmGuard::default() };
+            let guard = LlmGuard {
+                target: Some(0.0),
+                max_iters: 100,
+                ..LlmGuard::default()
+            };
             ascend_llm(&mut task, 0, &client, &guard)
         };
         let (b1, r1) = run();
@@ -1157,7 +1170,16 @@ mod ollama_tests {
 
     #[test]
     fn request_is_well_formed_http() {
-        let req = build_request("127.0.0.1", 11434, "llama3.2", "salut\n\"x\"", 4096, 16384, None, None);
+        let req = build_request(
+            "127.0.0.1",
+            11434,
+            "llama3.2",
+            "salut\n\"x\"",
+            4096,
+            16384,
+            None,
+            None,
+        );
         assert!(req.starts_with("POST /api/generate HTTP/1.1\r\n"));
         assert!(req.contains("Host: 127.0.0.1:11434\r\n"));
         assert!(req.contains("Content-Type: application/json\r\n"));
@@ -1171,13 +1193,22 @@ mod ollama_tests {
         assert_eq!(j.get("prompt").unwrap().as_str(), Some("salut\n\"x\""));
         assert_eq!(j.get("stream").unwrap().as_bool(), Some(false));
         // num_predict transmis (anti-troncature des complétions longues)
-        let np = j.get("options").and_then(|o| o.get("num_predict")).and_then(|v| v.as_u64());
+        let np = j
+            .get("options")
+            .and_then(|o| o.get("num_predict"))
+            .and_then(|v| v.as_u64());
         assert_eq!(np, Some(4096));
         // num_ctx transmis (défaut serveur 4096 = prompt tronqué sur cibles réelles)
-        let nc = j.get("options").and_then(|o| o.get("num_ctx")).and_then(|v| v.as_u64());
+        let nc = j
+            .get("options")
+            .and_then(|o| o.get("num_ctx"))
+            .and_then(|v| v.as_u64());
         assert_eq!(nc, Some(16384));
         // sans réglage, PAS de temperature/top_p → défaut du modèle respecté
-        assert!(j.get("options").and_then(|o| o.get("temperature")).is_none());
+        assert!(j
+            .get("options")
+            .and_then(|o| o.get("temperature"))
+            .is_none());
         assert!(j.get("options").and_then(|o| o.get("top_p")).is_none());
     }
 
@@ -1186,15 +1217,23 @@ mod ollama_tests {
         let req = build_request("h", 1, "m", "p", 256, 4096, Some(0.9), Some(0.8));
         let (_, body) = req.split_once("\r\n\r\n").unwrap();
         let j = crate::json::Json::parse(body).unwrap();
-        let temp = j.get("options").and_then(|o| o.get("temperature")).and_then(|v| v.as_f64());
-        let top_p = j.get("options").and_then(|o| o.get("top_p")).and_then(|v| v.as_f64());
+        let temp = j
+            .get("options")
+            .and_then(|o| o.get("temperature"))
+            .and_then(|v| v.as_f64());
+        let top_p = j
+            .get("options")
+            .and_then(|o| o.get("top_p"))
+            .and_then(|v| v.as_f64());
         assert_eq!(temp, Some(0.9));
         assert_eq!(top_p, Some(0.8));
     }
 
     #[test]
     fn builders_clamp_temperature_and_top_p() {
-        let c = OllamaClient::new("m").with_temperature(-1.0).with_top_p(2.0);
+        let c = OllamaClient::new("m")
+            .with_temperature(-1.0)
+            .with_top_p(2.0);
         assert_eq!(c.temperature, Some(0.0)); // ≥ 0
         assert_eq!(c.top_p, Some(1.0)); // borné à [0,1]
     }
@@ -1203,7 +1242,10 @@ mod ollama_tests {
     fn parses_ollama_response_into_lines() {
         let resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n\
                     {\"response\":\"alpha\\nbeta\\n\\n  gamma  \",\"done\":true}";
-        assert_eq!(parse_response(resp).unwrap(), vec!["alpha", "beta", "gamma"]);
+        assert_eq!(
+            parse_response(resp).unwrap(),
+            vec!["alpha", "beta", "gamma"]
+        );
     }
 
     #[test]
@@ -1245,7 +1287,10 @@ mod ollama_tests {
         let resp = "HTTP/1.1 200 OK\r\n\r\npas du json";
         assert!(matches!(parse_response(resp), Err(LlmError::Backend(_))));
         // réponse sans corps
-        assert!(matches!(parse_response("HTTP/1.1 500\r\n"), Err(LlmError::Backend(_))));
+        assert!(matches!(
+            parse_response("HTTP/1.1 500\r\n"),
+            Err(LlmError::Backend(_))
+        ));
     }
 
     #[test]
@@ -1253,7 +1298,10 @@ mod ollama_tests {
         // complete_raw (via extract_response_field) doit préserver les lignes
         // vides et l'indentation — sinon le FIND de DGM ne matche pas le fichier.
         let resp = "HTTP/1.1 200 OK\r\n\r\n{\"response\":\"fn f() {\\n\\n    let x = 0;\\n}\"}";
-        assert_eq!(extract_response_field(resp).unwrap(), "fn f() {\n\n    let x = 0;\n}");
+        assert_eq!(
+            extract_response_field(resp).unwrap(),
+            "fn f() {\n\n    let x = 0;\n}"
+        );
     }
 
     #[test]
@@ -1275,13 +1323,25 @@ mod ollama_tests {
         assert_eq!(models.len(), 5);
 
         // préférence exacte puis par préfixe
-        assert_eq!(pick_model(&models, Some("qwen2.5-coder:7b")).as_deref(), Some("qwen2.5-coder:7b"));
-        assert_eq!(pick_model(&models, Some("qwen3-coder")).as_deref(), Some("qwen3-coder:30b"));
+        assert_eq!(
+            pick_model(&models, Some("qwen2.5-coder:7b")).as_deref(),
+            Some("qwen2.5-coder:7b")
+        );
+        assert_eq!(
+            pick_model(&models, Some("qwen3-coder")).as_deref(),
+            Some("qwen3-coder:30b")
+        );
         // heuristique : le plus gros modèle de CODE (pas le 35b généraliste),
         // jamais un modèle d'embedding
-        assert_eq!(pick_model(&models, None).as_deref(), Some("qwen3-coder:30b"));
+        assert_eq!(
+            pick_model(&models, None).as_deref(),
+            Some("qwen3-coder:30b")
+        );
         // préférence introuvable → retombe sur l'heuristique via l'appelant
-        assert_eq!(pick_model(&models, Some("inexistant")).as_deref(), Some("qwen3-coder:30b"));
+        assert_eq!(
+            pick_model(&models, Some("inexistant")).as_deref(),
+            Some("qwen3-coder:30b")
+        );
         // aucun modèle de code → le plus gros généraliste
         let generic = vec!["llama3:8b".to_string(), "qwen3.6:35b".to_string()];
         assert_eq!(pick_model(&generic, None).as_deref(), Some("qwen3.6:35b"));
@@ -1309,12 +1369,22 @@ mod claude_tests {
         fail: bool,
     }
     impl ClaudeTransport for MockTransport {
-        fn post_json(&self, url: &str, headers: &[(String, String)], body: &str) -> Result<String, String> {
+        fn post_json(
+            &self,
+            url: &str,
+            headers: &[(String, String)],
+            body: &str,
+        ) -> Result<String, String> {
             // vérifie que le client envoie bien l'URL, les en-têtes et un corps JSON valides
             assert!(url.ends_with("/v1/messages"), "url = {url}");
             assert!(headers.iter().any(|(k, _)| k == "x-api-key"));
-            assert!(headers.iter().any(|(k, v)| k == "anthropic-version" && !v.is_empty()));
-            assert!(crate::json::Json::parse(body).is_ok(), "corps non JSON: {body}");
+            assert!(headers
+                .iter()
+                .any(|(k, v)| k == "anthropic-version" && !v.is_empty()));
+            assert!(
+                crate::json::Json::parse(body).is_ok(),
+                "corps non JSON: {body}"
+            );
             if self.fail {
                 Err("transport en panne".to_string())
             } else {
@@ -1331,13 +1401,19 @@ mod claude_tests {
         assert_eq!(j.get("max_tokens").unwrap().as_u64(), Some(256));
         let msgs = j.get("messages").unwrap().as_array().unwrap();
         assert_eq!(msgs[0].get("role").unwrap().as_str(), Some("user"));
-        assert_eq!(msgs[0].get("content").unwrap().as_str(), Some("salut\n\"x\""));
+        assert_eq!(
+            msgs[0].get("content").unwrap().as_str(),
+            Some("salut\n\"x\"")
+        );
     }
 
     #[test]
     fn parses_messages_text_blocks_into_lines() {
         let resp = r#"{"content":[{"type":"text","text":"alpha\nbeta"},{"type":"text","text":"\ngamma"}],"role":"assistant"}"#;
-        assert_eq!(parse_claude_response(resp).unwrap(), vec!["alpha", "beta", "gamma"]);
+        assert_eq!(
+            parse_claude_response(resp).unwrap(),
+            vec!["alpha", "beta", "gamma"]
+        );
     }
 
     #[test]
@@ -1353,7 +1429,10 @@ mod claude_tests {
     fn client_end_to_end_with_mock_transport() {
         let body = r#"{"content":[{"type":"text","text":"x*x + 1\nx + 2"}]}"#;
         let client = ClaudeClient::new(
-            MockTransport { body: body.to_string(), fail: false },
+            MockTransport {
+                body: body.to_string(),
+                fail: false,
+            },
             "sk-test",
             "claude-sonnet-4-6",
         );
@@ -1364,7 +1443,10 @@ mod claude_tests {
     #[test]
     fn transport_failure_is_backend_error() {
         let client = ClaudeClient::new(
-            MockTransport { body: String::new(), fail: true },
+            MockTransport {
+                body: String::new(),
+                fail: true,
+            },
             "sk-test",
             "claude-sonnet-4-6",
         );
@@ -1394,7 +1476,10 @@ mod claude_tests {
     fn propose_honours_k_upper_bound() {
         let body = r#"{"content":[{"type":"text","text":"a\nb\nc\nd\ne"}]}"#;
         let client = ClaudeClient::new(
-            MockTransport { body: body.to_string(), fail: false },
+            MockTransport {
+                body: body.to_string(),
+                fail: false,
+            },
             "sk-test",
             "claude-sonnet-4-6",
         );

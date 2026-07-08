@@ -116,8 +116,55 @@ Runtime `Feature` enum (`src/license.rs:29`) gains: `SlhAv2FullKernel`, `RsiSelf
 - **P2** ✅ DONE — OctaSoma/octacore promotion (`octacore`). **Circular-dep inversion**: removed `octacore`'s `ccos` git dep + `ccos_adapter` module; `CcosScope` now lives on the CCOS side (`src/octacore_bridge.rs`) implementing `octacore::CausalScope` over a CCOS `ExternalMemory`, so CCOS depends on `octacore`, never the reverse (`cargo tree -p octacore|grep ccos` empty). Premium gate `CausalCascadeAccess::unlock` (reuses `Feature::OctaSomaMemory`); `semantic_cascade`/`recall_semantic` helpers; deterministic `HashEmbedder` keeps the cascade bit-replayable. The core `Recall::Semantic` path is untouched. Gate met: 4 bridge unit + 4 fusion integration tests green; default + `--features octacore` + combo builds green; `octacore` self doctests pass.
 - **P3** ✅ DONE (2026-07-07) — RSI vendor + sandbox (`rsi`/`rsi-dgm`). **Crate side**: `ccos-rsi` has no `ccos` edge (`cargo tree -p rsi | grep ccos` empty), `AuditEvent::payload()` is `pub`, `ccos_audit` module gone. **Bridge wired** (`src/rsi_bridge.rs`, behind root `rsi` feature): `CcosAudit` (rsi `AuditLog` → CCOS hash-chained `EventLog`, returns the chain head not the event id), `RsiAccess`/`DgmAccess` Pro gates (`Feature::RsiSelfImprovement`/`RsiDgm` added to `src/license.rs`), `GuardedDgm` (editable-file allowlist + `GuardLayer` + air-gapped `cargo --offline --frozen` evaluator + hash-chain-audited `promote_to_live`) emitting the dedicated `EventType::SelfModify` + `EventPayload::RsiMutation{…}` (added to `src/event_log.rs`). Root `Cargo.toml` gains `rsi`/`rsi-dgm`/`rsi-full`/`pro-default`/`all-full` features + the `rsi` dep; `src/lib.rs` declares `#[cfg(feature="rsi")] pub mod rsi_bridge;`. Three latent bugs from the pre-crash draft fixed: the `run_step` `unreachable!()` panic (added `live_root` to the wrapper), the `GraphMutation` `edge_kind` typo (→ `edges_before/edges_after`), and the `Proposer::propose` `&mut self` test stub (→ `&self` + `Cell`). Gate met: `cargo check` default green & byte-identical (no `rsi` in tree); `cargo check --features rsi`/`rsi-dgm`/`pro-default` green; `cargo test --features rsi --lib` → 601/601 (5 new bridge tests: license refusal, CcosAudit hashchain, Pro unlock, allowlisted promote+audit, non-allowlisted refuse). `cargo tree -p rsi | grep ccos` empty. Close-out: **`docs/P3_HANDOFF.md`** (CLOSED).
 - **P4** ✅ DONE (2026-07-07) — Security hardening pass (NUMA audit, FFI, egress, determinism boundary; PQ default already wired in P1). **NUMA**: `ccos-scirust` now `#![deny(unsafe_code)]` at the crate root, with `#![allow(unsafe_code)]` zones only in the two audited modules — `numa.rs` (gated `#[cfg(all(feature="numa", target_os="linux"))]`, default off; `// SAFETY:` justifications on the `Send`/`Sync` impls for `AlignedBuffer`/`NumaBuffer`) and `attention/slha_v2.rs` (x86_64 `#[target_feature]`-gated SIMD, runtime `is_x86_feature_detected!`, scalar-equivalence-checked reference path). **FFI** (`slha-c`): output-boundary-only — `slha_process_tile` borrows a caller-owned tile (no `slha_tile_free`), `debug_assert!`s the `SLHA_TILE_ALIGN` (64/128) alignment on entry; `include/slha.h` documents the ownership + alignment contract. **Egress** (`src/egress.rs`, default-compiled, pure `std`): `EgressAllowlist` (default localhost/loopback only — `localhost`/`127.0.0.1`/`::1`/`[::1]`/`0.0.0.0`; `CCOS_EGRESS_ALLOW` comma-separated expansion; **fail-closed** `EgressError::{Malformed,HostNotAllowed}`) gates the three network call sites — `llm::query_as` (→ fallback `ValidatedResponse`, no call), `neural_embed::NeuralEncoder::try_new` (→ `NeuralEmbedError::EgressDenied`), `eval::ask` Anthropic/OpenAI/Ollama branches (→ `None`). **Determinism boundary**: `docs/DETERMINISM.md` (the feature→replay-posture table + air-gap + `unsafe` boundary) and `tests/determinism_boundary.rs` (5 tests: egress localhost-only + remote-ollama refusal, community refuses every REPLAY-RELAX feature, table total & consistent, relaxed set = Pro-gated set). Gate met: `cargo check` default + `--features slhav2-full` + `--features pro-default` + `--features llm,neural-embed` all green; default `cargo tree` shows no scirust/rsi (byte-identity preserved); `cargo check -p slha-c` green; `cargo test --test determinism_boundary` → 5/5; egress lib unit → 5/5; `cargo test --features slhav2-full --lib` → 604/604 (no regression). Close-out: **`docs/DETERMINISM.md`**.
-- **P5** Unified MCP/CLI + Pro-default.
-- **P6** Massive test suite + CI matrix.
+- **P5** ✅ DONE (2026-07-08) — Unified MCP/CLI. **One server, four namespaces**:
+  `src/mcp_ext.rs` (gated `any(slhav2-full, octacore, rsi)`) multiplexes
+  `slha.{explain,audit,compress,score,benchmark}` (codec-parameterised incl. TQ3,
+  mirroring the standalone `slha-mcp` contract), `octa.{explain,cascade_recall}`
+  (read-only cascade over the live session graph, deterministic `HashEmbedder`),
+  and `rsi.{explain,status}` into `src/mcp.rs` via two small hooks (catalogue
+  append + prefix dispatch). Every kernel-touching tool goes through its bridge's
+  Pro gate (visible `isError` refusal); the `explain` tools are free prose.
+  **Security stance: DGM execution is unreachable over MCP *and* the CLI** — only
+  the typed `GuardedDgm` API (which forces an explicit allowlist) can run it; the
+  MCP surface exposes status/documentation only. Unified CLI (`src/main.rs`,
+  thin wrappers over `mcp_ext::call_tool` so CLI and MCP share one
+  implementation/gate/refusal): `ccos slha explain|audit|benchmark`,
+  `ccos octa recall <text> --workspace <ws> [--k|--budget]`, `ccos rsi
+  status|explain`; refusals exit 3; help advertises only compiled namespaces.
+  Gate met: `tests/fusion_unified_mcp.rs` → 6/6 (4-namespace catalogue,
+  community visible-refusals + working core, Pro slha kernel incl. TQ3 compress,
+  cascade rerank over live content, rsi gates + no-self-modification posture,
+  free explains); `mcp_ext` unit tests green across feature combos; default
+  build untouched (no premium feature ⇒ module not compiled).
+- **P6** ✅ DONE (2026-07-08) — Test suite + CI matrix. `.github/workflows/ci.yml`
+  gains the fused profiles folded into the consolidated job: a **byte-identity
+  guard** (default `cargo tree` must pull no scirust/octasoma/octacore/rsi),
+  `cargo test --features pro-default` (deterministic premium bundle),
+  `cargo test --features all-full` (every REPLAY-RELAX kernel), per-member tests
+  (`-p scirust -p slha-mcp -p slha-c -p ccos-memory-runtime -p octasoma
+  -p octacore -p rsi`), and a community-tier CLI smoke pinning the visible
+  refusal (exit 3). Weekly `cargo audit` already runs in `audit.yml`.
+
+### Vendored-source refresh (2026-07-08 audit)
+
+The scirust family was re-based onto SLHAv2 HEAD (`0ba1991`), ingesting the
+whole TurboQuant series that had landed upstream after the P1 vendor (PR #52 +
+phase-0/1 precursors): the MIXED/TQ3/MIX3 latent codecs + their AVX2/AVX-512/NEON
+score paths (`slha_v2.rs` 805→3002 lines), `fit_joint` query-aware projection,
+COLD→EventLog persistence (`src/eventlog.rs`, std-only deterministic), the
+`slha.compress` codec parameter (slha-mcp), and the llama.cpp Phase-2 codec FFI
+bridge (`slha_weights_load`/`slha_encode_key`/`slha_decode_latent`, slha-c). The
+P4 hardening was re-applied on top (crate-root `#![deny(unsafe_code)]` with the
+two audited allow-zones, `// SAFETY:` justifications, slha-c debug alignment
+guard + header ownership contract — updated for the model handle the codec FFI
+introduces). `ccos-octasoma`/`ccos-octacore`/`ccos-scirust-python` were verified
+in sync (intentional manifest/dep-inversion surgery only). The CCOS base was
+caught up with upstream #151 (`ccos.recall` OpenClaw contract + `get`/`sync`
+tools). **cervo**: the vendored `ccos-rsi` (CERVO/RSI v0.10.0 engine) remains
+the fusion's RSI source; the `memorithm/cervo` scaffold repo has since evolved
+into an independent structural fork (own cortex/evolution/pipeline loop, still
+no LICENSE file) — per the §A decision it stays excluded; revisit only if it
+gains a license and converges with the engine.
 
 ## G. Risks & mitigations
 

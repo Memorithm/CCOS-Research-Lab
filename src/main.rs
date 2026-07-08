@@ -132,6 +132,18 @@ async fn main() {
         "agents" => from_code(commands_runtime::run_agents(rest).await),
         "benchmark" => from_code(commands_runtime::run_benchmark(rest)),
         "runtime" => from_code(commands_runtime::run_runtime(rest).await),
+        // ── CCOS_EXTENDED (plan P5) — unified premium CLI ────────────
+        // Same contract as the MCP namespaces (`src/mcp_ext.rs`): compiled only
+        // behind its cargo feature, runtime-gated by the offline Pro license,
+        // visible refusal on the community tier (exit 3), never a silent
+        // downgrade. DGM execution deliberately has NO CLI one-liner either —
+        // it requires the typed `GuardedDgm` API with an explicit allowlist.
+        #[cfg(feature = "slhav2-full")]
+        "slha" => run_slha_cmd(rest),
+        #[cfg(feature = "octacore")]
+        "octa" => run_octa_cmd(rest),
+        #[cfg(feature = "rsi")]
+        "rsi" => run_rsi_cmd(rest),
         other => {
             eprintln!("ccos: unknown command '{other}'\n");
             print_help();
@@ -2909,6 +2921,143 @@ fn run_sanitize(args: &[String]) -> CliResult {
     }
 }
 
+// ── CCOS_EXTENDED (plan P5) — unified premium CLI handlers ──────────────────
+// Thin wrappers over `ccos::mcp_ext::call_tool`, so the CLI and the MCP server
+// expose the exact same premium surface (one implementation, one gate, one
+// refusal text). A Pro-gate refusal prints the tool's visible message and exits
+// 3; malformed arguments exit 2.
+
+/// Run one premium tool against `session` and print its content blocks.
+#[cfg(any(feature = "slhav2-full", feature = "octacore", feature = "rsi"))]
+fn premium_tool_call(session: &mut AgentSession, tool: &str, args: serde_json::Value) -> CliResult {
+    match ccos::mcp_ext::call_tool(session, tool, &args) {
+        Ok(v) => {
+            for block in v
+                .get("content")
+                .and_then(|c| c.as_array())
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+            {
+                if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                    println!("{t}");
+                }
+            }
+            if v.get("isError").and_then(serde_json::Value::as_bool) == Some(true) {
+                Err(CliError::status(3))
+            } else {
+                Ok(())
+            }
+        }
+        Err((_, msg)) => Err(CliError::fail(format!("ccos {tool}: {msg}"))),
+    }
+}
+
+/// An in-memory session carrying the HOST's license tier (the same
+/// `Licensing::detect` used when opening a workspace) — what the stateless
+/// premium tools (slha.*, rsi.*) run against.
+#[cfg(any(feature = "slhav2-full", feature = "rsi"))]
+fn licensed_session() -> AgentSession {
+    let mut s = AgentSession::new();
+    s.set_licensing(ccos::license::Licensing::detect(ccos::license::now_unix()));
+    s
+}
+
+/// `ccos slha <explain|audit|benchmark [--n N]>` — the SLHAv2 full-kernel tier.
+/// (`slha.compress`/`slha.score` take 128-float vectors and stay MCP-only.)
+#[cfg(feature = "slhav2-full")]
+fn run_slha_cmd(args: &[String]) -> CliResult {
+    let sub = args.first().map(String::as_str).unwrap_or("");
+    let mut session = licensed_session();
+    match sub {
+        "explain" => premium_tool_call(&mut session, "slha.explain", serde_json::json!({})),
+        "audit" => premium_tool_call(&mut session, "slha.audit", serde_json::json!({})),
+        "benchmark" => {
+            let n = args
+                .iter()
+                .position(|a| a == "--n")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|v| v.parse::<u64>().ok());
+            let mut a = serde_json::json!({});
+            if let Some(n) = n {
+                a["n"] = serde_json::json!(n);
+            }
+            premium_tool_call(&mut session, "slha.benchmark", a)
+        }
+        other => Err(CliError::fail(format!(
+            "ccos slha: unknown subcommand '{other}' (expected explain | audit | benchmark [--n N])"
+        ))),
+    }
+}
+
+/// `ccos octa recall <text> --workspace <file.ccos> [--k K] [--budget B]` — the
+/// OctaCore cascade over a persisted workspace (its license tier is detected on
+/// open, like every workspace session).
+#[cfg(feature = "octacore")]
+fn run_octa_cmd(args: &[String]) -> CliResult {
+    let sub = args.first().map(String::as_str).unwrap_or("");
+    match sub {
+        "explain" => {
+            let mut session = AgentSession::new();
+            premium_tool_call(&mut session, "octa.explain", serde_json::json!({}))
+        }
+        "recall" => {
+            let text = args
+                .get(1)
+                .filter(|a| !a.starts_with("--"))
+                .cloned()
+                .unwrap_or_default();
+            if text.is_empty() {
+                return Err(CliError::fail(
+                    "ccos octa recall: missing <text> (usage: ccos octa recall <text> \
+                     --workspace <file.ccos> [--k K] [--budget B])",
+                ));
+            }
+            let flag = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1))
+                    .cloned()
+            };
+            let Some(ws) = flag("--workspace").or_else(|| std::env::var("CCOS_MCP_WORKSPACE").ok())
+            else {
+                return Err(CliError::fail(
+                    "ccos octa recall: a workspace is required (--workspace <file.ccos> \
+                     or $CCOS_MCP_WORKSPACE) — the cascade recalls over persisted memory",
+                ));
+            };
+            let mut session = match AgentSession::open(PathBuf::from(&ws)) {
+                Ok(s) => s,
+                Err(e) => return Err(CliError::fail(format!("ccos octa recall: {ws}: {e}"))),
+            };
+            let mut a = serde_json::json!({ "text": text });
+            if let Some(k) = flag("--k").and_then(|v| v.parse::<u64>().ok()) {
+                a["k"] = serde_json::json!(k);
+            }
+            if let Some(b) = flag("--budget").and_then(|v| v.parse::<u64>().ok()) {
+                a["budget"] = serde_json::json!(b);
+            }
+            premium_tool_call(&mut session, "octa.cascade_recall", a)
+        }
+        other => Err(CliError::fail(format!(
+            "ccos octa: unknown subcommand '{other}' (expected recall <text> | explain)"
+        ))),
+    }
+}
+
+/// `ccos rsi <status|explain>` — the self-improvement tier's read-only surface.
+#[cfg(feature = "rsi")]
+fn run_rsi_cmd(args: &[String]) -> CliResult {
+    let sub = args.first().map(String::as_str).unwrap_or("");
+    let mut session = licensed_session();
+    match sub {
+        "status" => premium_tool_call(&mut session, "rsi.status", serde_json::json!({})),
+        "explain" => premium_tool_call(&mut session, "rsi.explain", serde_json::json!({})),
+        other => Err(CliError::fail(format!(
+            "ccos rsi: unknown subcommand '{other}' (expected status | explain)"
+        ))),
+    }
+}
+
 fn print_help() {
     println!(
         "CCOS — Causal Context Operating System (v{})\n\n\
@@ -2982,6 +3131,26 @@ EXAMPLES:\n\
     ccos benchmark --cycles 100000\n",
         env!("CARGO_PKG_VERSION")
     );
+    // CCOS_EXTENDED (plan P5): the premium namespaces this build compiled in.
+    // Printed only when present — the help never promises a command this binary
+    // cannot execute (using one still requires the offline Pro license).
+    #[cfg(any(feature = "slhav2-full", feature = "octacore", feature = "rsi"))]
+    {
+        println!("PREMIUM (compiled in this build; Pro license required at runtime):");
+        #[cfg(feature = "slhav2-full")]
+        println!(
+            "    slha explain|audit|benchmark [--n N]   SLHAv2 full kernel: self-audit & throughput"
+        );
+        #[cfg(feature = "octacore")]
+        println!(
+            "    octa recall <text> --workspace <ws>    OctaCore cascade recall (--k K, --budget B)"
+        );
+        #[cfg(feature = "rsi")]
+        println!(
+            "    rsi status|explain                     RSI tier status (DGM is API-only, sandboxed)"
+        );
+        println!();
+    }
 }
 
 #[cfg(test)]

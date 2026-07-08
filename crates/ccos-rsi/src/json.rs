@@ -320,8 +320,7 @@ impl Parser {
                                 if !(0xDC00..=0xDFFF).contains(&low) {
                                     return Err("surrogate bas invalide".into());
                                 }
-                                let combined =
-                                    0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                                let combined = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
                                 char::from_u32(combined).unwrap_or('\u{FFFD}')
                             } else if (0xDC00..=0xDFFF).contains(&code) {
                                 // surrogate bas isolé : séquence invalide.
@@ -346,7 +345,10 @@ impl Parser {
         } else if self.match_literal("false") {
             Ok(Json::Bool(false))
         } else {
-            Err(format!("littéral booléen invalide à la position {}", self.pos))
+            Err(format!(
+                "littéral booléen invalide à la position {}",
+                self.pos
+            ))
         }
     }
 
@@ -398,10 +400,7 @@ mod tests {
         let v = Json::parse(src).unwrap();
         assert_eq!(v.get("a").unwrap().as_f64(), Some(1.0));
         assert_eq!(v.get("b").unwrap().as_array().unwrap().len(), 3);
-        assert_eq!(
-            v.get("c").unwrap().get("d").unwrap().as_f64(),
-            Some(-2.5)
-        );
+        assert_eq!(v.get("c").unwrap().get("d").unwrap().as_f64(), Some(-2.5));
         // re-parse de la sérialisation
         let again = Json::parse(&v.to_string()).unwrap();
         assert_eq!(v, again);
@@ -454,8 +453,8 @@ mod tests {
         // un alphabet riche en caractères structurellement signifiants.
         use crate::rng::Rng;
         const ALPHABET: &[char] = &[
-            '{', '}', '[', ']', ':', ',', '"', '\\', '/', 'u', 'n', 't', 'f', 'e', 'E',
-            '+', '-', '.', '0', '1', '9', ' ', '\n', '\t', 'a', 'z', 'é', '😀', '\u{0}',
+            '{', '}', '[', ']', ':', ',', '"', '\\', '/', 'u', 'n', 't', 'f', 'e', 'E', '+', '-',
+            '.', '0', '1', '9', ' ', '\n', '\t', 'a', 'z', 'é', '😀', '\u{0}',
         ];
         let mut rng = Rng::new(0x5EED);
         for _ in 0..10_000 {
@@ -469,7 +468,14 @@ mod tests {
         // quelques motifs adversariaux ciblés
         let deep = "[".repeat(200);
         for pat in [
-            "\"\\u", "\"\\uD83D", deep.as_str(), "{\"a\":", "\"\\", "1e", "-", "1.e9",
+            "\"\\u",
+            "\"\\uD83D",
+            deep.as_str(),
+            "{\"a\":",
+            "\"\\",
+            "1e",
+            "-",
+            "1.e9",
             "\"\\uZZZZ\"",
         ] {
             let _ = Json::parse(pat);

@@ -35,7 +35,7 @@
 
 use crate::external_memory::{ExternalMemory, Recall};
 use crate::license::{Feature, LicenseError, Licensing};
-use octacore::{CausalScope, Cascade, RecallItem, RecallWindow, ScopeItem};
+use octacore::{Cascade, CausalScope, RecallItem, RecallWindow, ScopeItem};
 
 /// A CCOS [`ExternalMemory`] dressed as an OctaCore [`CausalScope`]: a query becomes
 /// a `Recall::Task`, and the recalled region's items become [`ScopeItem`]s for

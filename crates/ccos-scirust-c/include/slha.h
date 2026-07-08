@@ -67,8 +67,9 @@ SlhaContext* slha_init();
  * or frees tiles. `tile` is borrowed for the duration of the call (caller-owned;
  * pass a pointer to a stack or caller-managed `SciRustSlhaTile`). There is no
  * `slha_tile_free` to pair with because no tile is ever produced by the library.
- * The only library-allocated output is the JSON string from `slha_audit`, which
- * MUST be freed with `slha_free_string`.
+ * The only library-allocated outputs are the JSON string from `slha_audit`
+ * (free with `slha_free_string`) and the model handle from `slha_weights_load`
+ * (free with `slha_weights_free`).
  *
  * Alignment: `tile` MUST be aligned to `SLHA_TILE_ALIGN` (64 by default, 128 when
  * the Rust crate was built with `cfg(cache_line_128)` — compile the C side with
@@ -97,6 +98,49 @@ char* slha_audit();
  * Free a string allocated by the library.
  */
 void slha_free_string(char* s);
+
+/* ------------------------------------------------------------------------- *
+ * Codec path — load a learned projection, encode a d-dim key into a tile,
+ * decode a tile's latent back to d-dim space. See docs/INTEGRATION.md.
+ * ------------------------------------------------------------------------- */
+
+/** Opaque handle to a loaded SLHA projection model (.slhw). */
+typedef struct SlhaModel SlhaModel;
+
+/**
+ * Load a projection model from a .slhw file. Returns NULL on error.
+ * Release with slha_weights_free.
+ */
+SlhaModel* slha_weights_load(const char* path);
+
+/** The projection input dimension d (key/query length). 0 if model is NULL. */
+size_t slha_model_dim(const SlhaModel* model);
+
+/**
+ * Encode a d-dim key into a 128-byte tile.
+ * codec: 0=int4-single 1=int4-grouped 2=nf4 3=mixed 4=tq3 5=mix3.
+ * Returns 0 on success; -1 null arg, -2 panic, -3 dim mismatch, -4 bad codec.
+ */
+int32_t slha_encode_key(
+    const SlhaModel* model,
+    const float* key,
+    size_t d,
+    uint32_t pos,
+    int32_t codec,
+    SciRustSlhaTile* out_tile);
+
+/**
+ * Decode a tile's latent back to the original d-dim space (reconstruct).
+ * out receives d floats. Returns 0 on success; -1 null, -2 panic, -3 dim.
+ */
+int32_t slha_decode_latent(
+    const SlhaModel* model,
+    const SciRustSlhaTile* tile,
+    float* out,
+    size_t d);
+
+/** Release a model from slha_weights_load. NULL is a no-op. */
+void slha_weights_free(SlhaModel* model);
 
 #ifdef __cplusplus
 }

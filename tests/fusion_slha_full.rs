@@ -30,8 +30,8 @@ const NOW: u64 = 1_000;
 /// serialize it into a 128-byte CCOS page at the documented ABI offsets.
 fn real_tile_page(id: u64, sigma: f32) -> AlignedMemoryPage {
     let mut v = [0.0f32; D_C];
-    for d in 0..D_C {
-        v[d] = ((id as i32 * 7 + d as i32 * 3) % 11) as f32 - 5.0;
+    for (d, x) in v.iter_mut().enumerate() {
+        *x = ((id as i32 * 7 + d as i32 * 3) % 11) as f32 - 5.0;
     }
     let (latent_kv, scale, group_scales) = quantize_latent_grouped(&v);
     let tile = ccos_scirust::attention::slha_v2::SciRustSlhaTile {
@@ -72,7 +72,10 @@ fn community_tier_refuses_full_kernel_no_silent_downgrade() {
     let err = FullSlhaAccess::unlock(&l, NOW).unwrap_err();
     assert_eq!(err, LicenseError::FeatureLocked(Feature::SlhAv2FullKernel));
     // No license at all ⇒ NoLicense path when no verifier is supplied.
-    assert_eq!(Licensing::community().tier(NOW), ccos::license::Tier::Community);
+    assert_eq!(
+        Licensing::community().tier(NOW),
+        ccos::license::Tier::Community
+    );
 }
 
 #[test]
@@ -120,8 +123,10 @@ fn informed_eviction_respects_budget_and_pins_sinks() {
     // Budget for ~2 HOT tiles; insert 4 with rising positions (the sink is the
     // lowest position). Informed eviction should keep the sink and drop the
     // lowest-importance non-sinks first.
-    let mut be =
-        access.scirust_backend_with_eviction(2 * HOT_BYTES, EvictionPolicy::Importance { sink_window: 1 });
+    let mut be = access.scirust_backend_with_eviction(
+        2 * HOT_BYTES,
+        EvictionPolicy::Importance { sink_window: 1 },
+    );
     for id in 1..=4u64 {
         let page = real_tile_page(id, id as f32 * 0.1);
         be.upsert(page);
@@ -186,7 +191,11 @@ fn flag_warm_round_trips_through_tile_abi() {
     let mut p = real_tile_page(42, 0.0);
     // Set the WARM flag in the ABI's flags field (offset 118).
     let flags_off = 118usize;
-    let mut flags = u16::from_le_bytes(p.payload.bytes[flags_off..flags_off + 2].try_into().unwrap());
+    let mut flags = u16::from_le_bytes(
+        p.payload.bytes[flags_off..flags_off + 2]
+            .try_into()
+            .unwrap(),
+    );
     flags |= FLAG_WARM;
     p.payload.bytes[flags_off..flags_off + 2].copy_from_slice(&flags.to_le_bytes());
 

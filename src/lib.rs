@@ -123,6 +123,13 @@ pub mod llm;
 pub mod lsa;
 pub mod lzss;
 pub mod mcp;
+// CCOS_EXTENDED (plan P5) — the premium MCP namespaces (`slha.*` / `octa.*` /
+// `rsi.*`) multiplexed into the single CCOS server. Compiled only when at least
+// one premium feature is on (the default build carries none of it); every
+// kernel-touching tool is runtime-gated by the offline Pro license, and DGM
+// execution is deliberately NOT exposed over MCP. See `src/mcp_ext.rs`.
+#[cfg(any(feature = "slhav2-full", feature = "octacore", feature = "rsi"))]
+pub mod mcp_ext;
 pub mod memory;
 pub mod migrate;
 // Quarantined neural embedder (off-by-default `neural-embed` feature): an
@@ -166,16 +173,16 @@ pub mod slha_full;
 // tiers is runtime-gated by the offline license (`Feature::RsiSelfImprovement` /
 // `Feature::RsiDgm`) via `RsiAccess`/`DgmAccess::unlock`. See `src/rsi_bridge.rs`
 // and `docs/P3_HANDOFF.md`.
-#[cfg(feature = "rsi")]
-pub mod rsi_bridge;
+pub mod egress;
 pub mod parser;
 pub mod persist;
 pub mod postmortem;
 pub mod query;
 pub mod retrieval;
 pub mod retrodict;
+#[cfg(feature = "rsi")]
+pub mod rsi_bridge;
 pub mod sanitizer;
-pub mod egress;
 pub mod spectral;
 pub mod trace;
 pub mod util;
