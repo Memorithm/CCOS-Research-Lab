@@ -1,8 +1,8 @@
 //! **SLHAv2 full-kernel tier** (CCOS_EXTENDED, plan P1) — the premium bridge from
-//! CCOS's runtime-neutral [`MemoryProvider`] surface to the REAL `ccos-scirust`
+//! CCOS's runtime-neutral [`MemoryProvider`](ccos_memory_runtime::traits::MemoryProvider)
+//! surface to the REAL `ccos-scirust`
 //! attention kernel, behind the off-by-default `slhav2-full` cargo feature and
-//! the Pro [`Feature::SlhAv2FullKernel`](crate::license::Feature::SlhAv2FullKernel)
-//! runtime gate.
+//! the Pro [`Feature::SlhAv2FullKernel`](crate::license::Feature) runtime gate.
 //!
 //! ## What this module is, and is not
 //!
@@ -61,7 +61,8 @@ impl FullSlhaAccess {
         Ok(Self { _gated: () })
     }
 
-    /// Construct a fresh [`ScirustBackend`] (HOT/WARM/COLD elastic arena) sized for
+    /// Construct a fresh [`ScirustBackend`](ccos_memory_runtime::backend::scirust_full::ScirustBackend)
+    /// (HOT/WARM/COLD elastic arena) sized for
     /// `budget_bytes`, reachable only behind [`Self::unlock`]. The backend speaks
     /// the runtime-neutral [`MemoryProvider`](ccos_memory_runtime::traits::MemoryProvider)
     /// contract, so the runtime can swap it in for the distilled `SlhaAdapter`
@@ -73,7 +74,8 @@ impl FullSlhaAccess {
         ccos_memory_runtime::backend::scirust_full::ScirustBackend::with_budget(budget_bytes)
     }
 
-    /// Construct a [`ScirustBackend`] with an explicit informed-eviction policy
+    /// Construct a [`ScirustBackend`](ccos_memory_runtime::backend::scirust_full::ScirustBackend)
+    /// with an explicit informed-eviction policy
     /// (plan axis A5: lowest H2O importance first, attention sinks pinned by
     /// `sink_window`). Reachable only behind [`Self::unlock`].
     pub fn scirust_backend_with_eviction(
@@ -87,7 +89,8 @@ impl FullSlhaAccess {
         )
     }
 
-    /// Build a [`LatentSafetyGuard`] seeded with a reference direction and a
+    /// Build a [`LatentSafetyGuard`](ccos_scirust::safety::LatentSafetyGuard)
+    /// seeded with a reference direction and a
     /// dot-product threshold (cosine below it ⇒ `DotProductDeviation`). The guard
     /// analyses compressed latents *before* dequantisation, so a CCOS ingestion
     /// path can reject a prompt-injection / drift tile early. Reachable only
