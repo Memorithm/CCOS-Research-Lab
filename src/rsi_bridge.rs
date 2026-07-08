@@ -12,8 +12,8 @@
 //! What this module exposes (behind the `rsi` cargo feature, runtime-gated by the
 //! offline license):
 //!
-//! - [`CcosAudit`] — the moved adapter: rsi's [`AuditLog`](rsi::AuditLog) over
-//!   CCOS's hash-chained [`EventLog`](crate::event_log::EventLog). Every RSI step
+//! - [`CcosAudit`] — the moved adapter: rsi's [`AuditLog`] over
+//!   CCOS's hash-chained [`EventLog`]. Every RSI step
 //!   the agent records becomes a tamper-evident CCOS event.
 //! - [`RsiAccess`] — the Pro gate for running an RSI agent with CCOS audit
 //!   ([`Feature::RsiSelfImprovement`]).
@@ -62,8 +62,8 @@ use rsi::Rng;
 
 // ── CcosAudit — the moved adapter (rsi AuditLog → CCOS EventLog) ─────────────
 
-/// rsi's [`AuditLog`](rsi::AuditLog) backed by CCOS's hash-chained
-/// [`EventLog`](crate::event_log::EventLog). Each `record` appends a
+/// rsi's [`AuditLog`] backed by CCOS's hash-chained
+/// [`EventLog`]. Each `record` appends a
 /// `Custom { key: "rsi_step", value: <canonical payload> }` event of type
 /// `AgentAction`; the returned string is the chain head after the append (the
 /// tamper-evident link hash). This is the CCOS-side replacement for rsi's former
