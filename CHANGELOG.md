@@ -8,6 +8,27 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **CCOS_EXTENDED fusion audit + P5/P6 close-out (the premium merger of CCOS +
+  SLHAv2 + OctaSoma + CERVO/RSI).** (1) *Base sync*: the CCOS core was caught up
+  with upstream #151 — `ccos.recall` aligned with the OpenClaw contract
+  (`query`/`limit`/`minScore`/`sessionKey` aliases + `structuredContent`) and the
+  new `get` / `sync` MCP tools. (2) *Vendored-source refresh*: the scirust family
+  was re-based onto SLHAv2 HEAD, ingesting the TurboQuant series — MIXED/TQ3/MIX3
+  latent codecs with AVX2/AVX-512/NEON score paths, `fit_joint`, COLD→EventLog
+  persistence, the `slha.compress` codec parameter, and the llama.cpp Phase-2
+  codec FFI (`slha_weights_load`/`slha_encode_key`/`slha_decode_latent`) — with
+  the P4 hardening re-applied on top (`#![deny(unsafe_code)]` + audited allow
+  zones + FFI alignment guard). (3) *P5 — unified premium surface*: one MCP
+  server multiplexing four namespaces (`ccos.*` + `slha.*` + `octa.*` + `rsi.*`,
+  `src/mcp_ext.rs`), each kernel tool behind its offline Pro gate with visible
+  refusals, and the matching CLI (`ccos slha|octa|rsi …`, refusal exit 3) sharing
+  the same implementation. **DGM self-modification stays unreachable over MCP and
+  the CLI** — typed `GuardedDgm` API only. (4) *P6 — CI matrix*: byte-identity
+  guard (default tree links no premium kernel), `pro-default` / `all-full` test
+  profiles, fused-member tests, community-tier CLI refusal smoke.
+  New: `tests/fusion_unified_mcp.rs` (6 tests), `docs/AUDIT_FUSION_2026-07.md`
+  (the full audit report).
+
 - **Cryptographic agent identity for the multi-agent store (`signed-sync`, off by default).** The
   hash chain proves a bundle's *integrity*; only a signature proves *who* recorded it. The new
   feature adds exactly that: `ccos sync keygen` creates a per-workspace ed25519 identity

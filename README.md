@@ -12,6 +12,32 @@ self-bounding, linearised context window a host can inject into its prompt, plus
 post-mortem debugger to rewind to exactly where the agent's attention went off the
 rails.
 
+---
+
+## CCOS_EXTENDED — the premium fused edition
+
+This repository is **CCOS_EXTENDED**: CCOS (the hub, unchanged by default) fused
+with the org's three other engines, each vendored as a workspace crate and
+reachable only behind an opt-in cargo feature **plus** the offline Pro license:
+
+| Fused source | Crate(s) | Feature | What it adds |
+|---|---|---|---|
+| **SLHAv2** | `ccos-scirust{,-mcp,-c,-python}` | `slhav2-full` | the real SLHA v2 attention kernel: 128-byte KV tiles, INT4/grouped/NF4/mixed/**TQ3 (TurboQuant)** codecs, SIMD score paths, `ElasticKvCache` soft-paging backend, `LatentSafetyGuard` |
+| **OctaSoma** | `ccos-octasoma`, `ccos-octacore` | `octasoma`, `octacore` | semantic memory + the validated causal-narrow → cosine-rerank **cascade** |
+| **CERVO/RSI** | `ccos-rsi` | `rsi`, `rsi-dgm`, `rsi-full` | the recursive self-improvement engine; the DGM loop runs only through the hard-sandboxed `GuardedDgm` API (allowlist + air-gapped evaluator + hash-chain audit) |
+
+One MCP server multiplexes the four namespaces (`ccos.*` + `slha.*` + `octa.*`
++ `rsi.*`) and the CLI mirrors it (`ccos slha|octa|rsi …`). Bundles:
+`--features pro-default` (every deterministic premium tier, replay-safe) and
+`--features all-full` (adds the documented REPLAY-RELAX kernels; test/CI).
+**The default build stays byte-identical to CCOS** — `cargo tree` links no
+premium crate (CI-enforced), the air-gap egress posture is fail-closed, and
+every community-tier refusal is visible, never a silent downgrade. See
+`docs/FUSION_PLAN.md` (architecture, P0–P6), `docs/AUDIT_FUSION_2026-07.md`
+(fusion & security audit) and `docs/DETERMINISM.md` (the replay boundary).
+
+---
+
 **What's genuinely new.** Many systems page code into a context window; the
 distinctive contribution of CCOS is to treat the agent's **working memory itself**
 as a transactional subsystem — *deterministic, hash-chained, replayable bit-for-bit,
