@@ -115,7 +115,7 @@ jobs:
       - name: Test (fused workspace members — scirust family, octasoma/octacore, rsi)
         run: cargo test --locked -p scirust -p slha-mcp -p slha-c -p ccos-memory-runtime -p octasoma -p octacore -p rsi
 
-      - name: Smoke-test the premium CLI (community tier: visible refusal, exit 3)
+      - name: "Smoke-test the premium CLI (community tier: visible refusal, exit 3)"
         run: |
           cargo run --locked --features llm,all-full -- rsi status
           cargo run --locked --features llm,all-full -- slha explain
