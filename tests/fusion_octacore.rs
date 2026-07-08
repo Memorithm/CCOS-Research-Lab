@@ -12,8 +12,8 @@
 #![cfg(feature = "octacore")]
 
 use ccos::external_memory::{CcosMemory, ExternalMemory};
-use ccos::license::{Feature, LicenseError, Licensing, Tier};
 use ccos::license::License;
+use ccos::license::{Feature, LicenseError, Licensing, Tier};
 use ccos::octacore_bridge::{
     ranked_items, recall_semantic, semantic_cascade, CausalCascadeAccess, CcosScope,
     OfflineEmbedder,

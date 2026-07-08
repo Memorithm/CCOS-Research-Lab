@@ -141,7 +141,10 @@ fn extract_host(url: &str) -> Option<String> {
         }
     }
     // Plain host or host:port — strip the port (last ':' before any bracket).
-    let host = authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority);
+    let host = authority
+        .rsplit_once(':')
+        .map(|(h, _)| h)
+        .unwrap_or(authority);
     if host.is_empty() {
         None
     } else {
@@ -167,7 +170,9 @@ mod tests {
 
     #[test]
     fn non_loopback_is_refused() {
-        let e = al().check("https://api.anthropic.com/v1/messages").unwrap_err();
+        let e = al()
+            .check("https://api.anthropic.com/v1/messages")
+            .unwrap_err();
         match e {
             EgressError::HostNotAllowed { host, .. } => assert_eq!(host, "api.anthropic.com"),
             EgressError::Malformed(_) => panic!("expected HostNotAllowed"),
@@ -176,8 +181,14 @@ mod tests {
 
     #[test]
     fn malformed_url_is_refused() {
-        assert!(matches!(al().check("not-a-url").unwrap_err(), EgressError::Malformed(_)));
-        assert!(matches!(al().check("http:///path").unwrap_err(), EgressError::Malformed(_)));
+        assert!(matches!(
+            al().check("not-a-url").unwrap_err(),
+            EgressError::Malformed(_)
+        ));
+        assert!(matches!(
+            al().check("http:///path").unwrap_err(),
+            EgressError::Malformed(_)
+        ));
     }
 
     #[test]

@@ -126,7 +126,10 @@ mod tests {
         let mut be = access.scirust_backend(10 * 128);
         // A default upsert round-trips through the arena.
         be.upsert(ccos_memory_runtime::AlignedMemoryPage::new(7));
-        assert_eq!(be.state(7).unwrap(), ccos_memory_runtime::telemetry::MemoryState::Hot);
+        assert_eq!(
+            be.state(7).unwrap(),
+            ccos_memory_runtime::telemetry::MemoryState::Hot
+        );
         let guard = access.safety_guard([1.0; ccos_scirust::D_C], 0.5);
         let _ = guard.last_cosine();
     }
