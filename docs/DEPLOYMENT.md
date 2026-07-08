@@ -12,7 +12,14 @@ The `ccos` binary **requires the `llm` feature** (it drives the async MCP server
 `cargo build --release` produces **no binary at all**. Build with the deployment features:
 
 ```sh
+# Community / core deployment:
 cargo build --release --features llm,license
+
+# CCOS_EXTENDED premium deployment — every deterministic Pro tier, replay-safe:
+cargo build --release --features llm,pro-default
+
+# Everything incl. the REPLAY-RELAX full kernels (test/CI; see docs/DETERMINISM.md):
+cargo build --release --features llm,all-full
 ```
 
 | feature | gives you | default |
@@ -20,8 +27,23 @@ cargo build --release --features llm,license
 | `syn-parser` | the accurate `syn` AST parser | **on** |
 | `llm` | the `ccos` binary itself + MCP server + Ollama backend | required for the bin |
 | `license` | the offline ed25519 Pro-license verifier (`tensions` / `audit` + a Pro tier) | recommended |
+| `license-pq` | the offline **post-quantum** (SLH-DSA, FIPS 205) Pro-license verifier — composes with `license` (§4b) | recommended |
+| `signed-sync` | per-workspace ed25519 identities for `ccos sync` (signed, TOFU-pinned bundles) | optional |
 | `learned-embed` | the LSA semantic re-ranker | optional |
 | `mimalloc` | a faster allocator (benchmarking only) | optional |
+| `neural-embed` | quarantined **local** neural embedder (Ollama `/api/embeddings`; REPLAY-RELAX) | optional |
+| `slhav2` | the distilled zero-dep SLHAv2 tile backend (`replay == live`) | optional |
+| `slhav2-full` | the REAL `ccos-scirust` kernel — SIMD scoring, `ElasticKvCache`, `LatentSafetyGuard`, the `slha.*` MCP tools + `ccos slha` (Pro-gated; REPLAY-RELAX) | optional |
+| `octasoma` | the OctaSoma semantic-memory backend + the `octa-semantic` recall strategy (Pro-gated) | optional |
+| `octacore` | the causal-narrow → cosine-rerank cascade — the `octa.*` MCP tools + `ccos octa` (Pro-gated; implies `octasoma`) | optional |
+| `rsi` | the CERVO/RSI self-improvement core — the `rsi.*` MCP status tools + `ccos rsi` (Pro-gated) | optional |
+| `rsi-dgm` | the hard-sandboxed Darwin–Gödel Machine loop (typed API only; Pro-gated; REPLAY-RELAX) | optional |
+| `rsi-full` | RSI + a local LLM proposer backend (REPLAY-RELAX) | optional |
+| `pro-default` | **bundle**: every deterministic premium tier (`license`, `license-pq`, `signed-sync`, `slhav2`, `octasoma`, `octacore`, `rsi`, `learned-embed`) — replays bit-identically | premium |
+| `all-full` | **bundle**: `pro-default` + every REPLAY-RELAX full kernel | test/CI |
+
+The **default build** (nothing beyond `syn-parser`) compiles none of the premium crates — its
+dependency tree is byte-identical to core CCOS, and the CI's byte-identity guard enforces that.
 
 ## 2. Install
 
@@ -35,21 +57,23 @@ ccos doctor
 ```
 ccos doctor — deployment self-check
 
-  version      0.3.0
+  version      0.4.0
   build        release
   target       x86_64-linux
   parser       syn AST (accurate)
-  features     llm=yes license=yes syn-parser=yes learned-embed=no mimalloc=no
+  features     llm=yes license=yes license-pq=yes syn-parser=yes learned-embed=no mimalloc=no signed-sync=no
+  premium      slhav2=no slhav2-full=no octasoma=no octacore=no rsi=no rsi-dgm=no
   mcp          ready  (ccos mcp <workspace>)
 
   license
-    verifier   ed25519 (compiled in)
-    vendor key placeholder (fail-closed)
+    verifier   slh-dsa (SLH-DSA-128s) + ed25519 (both compiled in)
+    ed25519 key placeholder (fail-closed)
+    slh-dsa key placeholder (fail-closed)
     tier       community
     token      none
 
   ⚠ 1 warning(s):
-    - embedded public key is the all-zero placeholder — Pro is fail-closed until a vendor key is set …
+    - no vendor public key is set (both embedded keys are the all-zero placeholder) — Pro is fail-closed until a vendor key is set …
 ```
 
 ## 3. MCP server
@@ -80,10 +104,14 @@ cargo run --features license --example license_sign -- keygen
 CCOS_LICENSE_SIGNING_SEED=<64-hex-seed> \
   cargo run --features license --example license_sign -- sign --licensee "Acme Corp" --days 365
 
-# 3. Install the token on the host — env var or file.
-export CCOS_LICENSE="<token>"                 # or: write it to ~/.config/ccos/license
+# 3. Install the token on the host — env var, explicit file, or the XDG default.
+export CCOS_LICENSE="<token>"                 # inline (containers / CI), or:
+export CCOS_LICENSE_FILE=/etc/ccos/license    # an explicit path, or:
+#     write it to ~/.config/ccos/license      # ($XDG_CONFIG_HOME/ccos/license)
 ccos doctor                                   # tier should now read: PRO
 ```
+
+Resolution order: `$CCOS_LICENSE` (token text inline) → `$CCOS_LICENSE_FILE` → the XDG default.
 
 Verification is **fully offline** — no network, no telemetry — so a customer can run air-gapped.
 
@@ -147,6 +175,19 @@ causal graph, Q-Page, and recall are **never** gated):
   the MCP `octa-semantic` strategy then trust an anchor only when it clears the floor — refusals
   are visible (`octa-semantic-below-floor-fallback-task`), never a silent downgrade, and with too
   few labels no floor is fabricated.
+- **slhav2-full-kernel** *(CCOS_EXTENDED, `slhav2-full` cargo feature)* — the REAL `ccos-scirust`
+  attention kernel as a `MemoryProvider` backend: runtime-dispatched SIMD scoring, `ElasticKvCache`
+  HOT/WARM/COLD soft-paging with informed eviction, the `LatentSafetyGuard`, and the `slha.*` MCP
+  tools / `ccos slha` CLI. A documented REPLAY-RELAX (see `docs/DETERMINISM.md`); the distilled
+  `slhav2` backend stays the replay-exact store.
+- **rsi-self-improvement** *(CCOS_EXTENDED, `rsi` cargo feature)* — running the CERVO/RSI agent
+  with CCOS audit (`CcosAudit`: rsi's audit log over CCOS's hash-chained `EventLog`), plus the
+  `rsi.*` MCP status tools / `ccos rsi` CLI. The std-only core keeps `replay == live`.
+- **rsi-dgm** *(CCOS_EXTENDED, `rsi-dgm` cargo feature)* — the hard-sandboxed Darwin–Gödel Machine
+  loop (`GuardedDgm`: editable-file allowlist, GuardLayer sanitation, air-gapped
+  `cargo --offline --frozen` evaluator, hash-chain-audited promotion). Deliberately reachable
+  **only** through the typed API — no MCP tool and no CLI one-liner can trigger self-modification.
+  A documented REPLAY-RELAX.
 
 `ccos license` enumerates the active set; `ccos doctor` reports the compiled verifier scheme(s).
 

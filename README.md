@@ -173,16 +173,19 @@ measurements behind the numbers above are in
 ### 3. Standard MCP transport
 
 - **Stdio JSON-RPC server.** Native, synchronous, zero-network integration with any
-  MCP-compatible host (e.g. Claude Code). Fourteen tools: `ingest`, `recall`,
+  MCP-compatible host (e.g. Claude Code). Sixteen core tools: `ingest`, `recall`,
   `signal_failure`, `page_fault`, `stats`, `verify`, `timeline`, `recall_what_if`,
   `ccos_retrieve` (fetch the original of a compressed item), the causal-intervention
   pair `causal_intervene` (do(X): the nodes a change would force) / `causal_blame`
   (candidate root causes — what a node depends on), `drift_cause` (change-point
   attribution: which recorded op moved a node's score), `retrodict_belief`
   (the RTS-smoothed belief trajectory — future evidence folded back into past steps),
-  and `causal_flash` (a bounded causal-cone context window rooted at the active
+  `causal_flash` (a bounded causal-cone context window rooted at the active
   frontier — a high-density, token-budgeted summary that scales without recomputing
-  global centrality).
+  global centrality), and the OpenClaw contract pair `get` (read an ingested file by
+  path) / `sync` (boot/refresh checkpoint ack). Fused CCOS_EXTENDED builds multiplex
+  the Pro namespaces `slha.*` / `octa.*` / `rsi.*` into the same server (see
+  `docs/MEMORY_INTERFACE.md` for the full catalogue).
 - **Dynamic resources.** `ccos://session/context` exposes the self-bounding working
   set, **reversibly compressed** by default (`CCOS_COMPRESS_CONTEXT=0` to disable for
   A/B), for the host to drop into its system prompt; `ccos://session/timeline` exposes
@@ -398,7 +401,8 @@ Module reference: `cargo doc --open` (every module has rustdoc), or
 ## Testing
 
 ```bash
-cargo test                     # 364 unit, integration & doc tests (default features)
+cargo test                     # the default-features unit, integration & doc suite
+cargo test --features pro-default   # + every deterministic premium tier (CCOS_EXTENDED)
 cargo clippy --all-targets --all-features   # lint-clean (-D warnings in CI)
 cargo test -- --ignored        # opt-in: 1,000,000-cycle long-stability run
 ```
