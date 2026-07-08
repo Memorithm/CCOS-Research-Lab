@@ -30,6 +30,12 @@
 //! in the type. The default core `Recall::Semantic` path (INT4 TF-IDF, in
 //! [`crate::external_memory`]) is untouched and stays `replay == live`; this bridge
 //! is the opt-in premium alternative, never a silent replacement.
+//!
+//! Running a **real** embedder here? Wrap it in
+//! [`CachedEmbedder`](crate::embed_cache::CachedEmbedder) — the cascade rebuilds
+//! derived state per recall, and the content-addressed cache (optionally
+//! persisted next to the workspace) makes that amortized instead of one
+//! embedding call per node per recall.
 
 #![cfg(feature = "octacore")]
 

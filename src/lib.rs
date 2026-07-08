@@ -145,6 +145,13 @@ pub mod neural_embed;
 // compiles none of it and stays deterministic + replay-exact. See the module docs.
 #[cfg(feature = "octasoma")]
 pub mod octa_index;
+// CCOS_EXTENDED — content-addressed embedding cache: makes a REAL (neural,
+// non-replay-exact) embedder practical behind the derived semantic index and
+// the OctaCore cascade (wrap any `octasoma::Embedder`; sha256(content) →
+// vector; fail-closed persistence). The deterministic HashEmbedder stays
+// bit-replayable with or without it. See `src/embed_cache.rs`.
+#[cfg(feature = "octasoma")]
+pub mod embed_cache;
 // CCOS_EXTENDED (plan P2) — OctaCore cascade bridge: the CCOS-side half of the
 // circular-dep inversion. `octacore` no longer depends on CCOS; the `CcosScope`
 // adapter (CCOS `ExternalMemory` → `octacore::CausalScope`) lives here, behind the

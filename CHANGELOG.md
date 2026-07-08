@@ -6,6 +6,22 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Content-addressed embedding cache (`ccos::embed_cache::CachedEmbedder`,
+  `octasoma` feature)** — the documented follow-up of the Pro semantic tier:
+  wrap ANY `octasoma::Embedder` (notably the local `OllamaEmbedder`) and
+  identical content is embedded once (`sha256(text) → vector`), making the
+  derived semantic index and the OctaCore cascade practical behind a real
+  neural embedder instead of one embedding call per node per rebuild.
+  Optional durable persistence (`save`/`load`, temp+fsync+atomic-rename like
+  every checkpoint) is **fail-closed**: a cache built by a different embedder
+  (label or dimension) or a malformed file is refused with an explicit error,
+  never served silently and never downgraded to an empty cache. Hit/miss
+  stats for observability; the deterministic `HashEmbedder` stays
+  bit-replayable with or without the cache (transparency covered by tests,
+  incl. identical cascade rankings). 5 unit tests + doctest.
+
 ### Changed
 
 - **Documentation refresh (post-0.4.0 doc audit)** — the user-facing docs now
