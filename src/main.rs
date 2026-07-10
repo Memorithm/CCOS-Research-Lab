@@ -128,6 +128,7 @@ async fn main() {
             }
         }
         "license" => run_license(rest),
+        "update" => run_update(&UpdateOpts::parse(rest)).await,
         "tensions" => run_tensions(&TensionsOpts::parse(rest)),
         "audit" => run_audit(&AuditOpts::parse(rest)),
         "trace" => run_trace_cmd(),
@@ -887,6 +888,230 @@ async fn run_license_claim(args: &[String]) -> CliResult {
     println!("  installed    {}", path.display());
     println!("\n  ✓ license claimed — run `ccos doctor` to confirm the PRO tier.");
     Ok(())
+}
+
+/// Options for `ccos update`.
+struct UpdateOpts {
+    /// Release endpoint (explicit by design — the egress consent for the call).
+    from: Option<String>,
+    /// Report the available version and the license verdict; install nothing.
+    check: bool,
+    /// Replace the binary without an interactive confirmation.
+    yes: bool,
+}
+
+impl UpdateOpts {
+    fn parse(args: &[String]) -> Self {
+        let mut o = Self {
+            from: None,
+            check: false,
+            yes: false,
+        };
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--from" => {
+                    i += 1;
+                    o.from = args.get(i).cloned();
+                }
+                "--check" => o.check = true,
+                "--yes" | "-y" => o.yes = true,
+                _ => {}
+            }
+            i += 1;
+        }
+        o
+    }
+}
+
+/// `ccos update --from <URL> [--check] [--yes]` — fetch the vendor's signed
+/// release manifest, verify it against the public key **baked into this
+/// binary** (the same trust root as licenses — a hijacked mirror can serve
+/// nothing the vendor did not sign), enforce the annual single-seat license
+/// for Pro artifacts, then download, hash-check and atomically install the
+/// new binary over the running one. Every refusal is announced; `--check`
+/// reports without writing. See `docs/LICENSING_SERVER.md` ("Updates").
+#[cfg(feature = "license")]
+async fn run_update(opts: &UpdateOpts) -> CliResult {
+    use ccos::release::{compare_versions, verify_manifest};
+    let Some(from) = opts.from.as_deref() else {
+        return Err(CliError::usage(
+            "usage: ccos update --from <https://releases-host> [--check] [--yes]\n\
+             (the release endpoint is explicit by design — see docs/LICENSING_SERVER.md)",
+        ));
+    };
+    // An explicit file URL is used verbatim; a bare host gets the canonical
+    // manifest name (the same convention as the claim endpoint).
+    let base = from.trim_end_matches('/');
+    let manifest_url = if base.ends_with(".manifest") || base.ends_with(".txt") {
+        base.to_string()
+    } else {
+        format!("{base}/release.manifest")
+    };
+    let allowlist = ccos::egress::EgressAllowlist::from_env().allowing(from);
+    allowlist
+        .check(&manifest_url)
+        .map_err(|e| CliError::fail(format!("ccos update: {e}")))?;
+
+    let current = env!("CARGO_PKG_VERSION");
+    println!("ccos update — signed-release check\n");
+    println!("  current      {current}");
+    println!("  manifest     {manifest_url}");
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| CliError::fail(format!("ccos update: http client: {e}")))?;
+    let text = client
+        .get(&manifest_url)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| CliError::fail(format!("ccos update: fetching the manifest: {e}")))?
+        .text()
+        .await
+        .map_err(|e| CliError::fail(format!("ccos update: reading the manifest: {e}")))?;
+
+    // Trust the signature, not the server.
+    let manifest = verify_manifest(&text)
+        .map_err(|e| CliError::fail(format!("ccos update: manifest did not verify: {e}")))?;
+    println!(
+        "  published    {} ({}, tier {})",
+        manifest.version,
+        chrono::DateTime::from_timestamp(manifest.released_unix as i64, 0)
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| manifest.released_unix.to_string()),
+        manifest.tier
+    );
+    if compare_versions(&manifest.version, current) != std::cmp::Ordering::Greater {
+        println!("\n  ✓ already up to date.");
+        return Ok(());
+    }
+
+    // The annual, single-seat gate — enforced at update time exactly like at
+    // feature time, with the same announced refusal (exit 3, never silent).
+    let now = ccos::license::now_unix();
+    let licensing = ccos::license::Licensing::detect(now);
+    let pro = matches!(licensing.tier(now), ccos::license::Tier::Pro);
+    if manifest.tier == "pro" && !pro {
+        println!(
+            "\n  ✗ ccos {} is a Pro release and this machine has no active license — \
+             the installed version keeps working; the update is refused (announced, \
+             never silent). If your annual license expired, renew with \
+             `ccos license claim <renewal-code> --from <counter>`; if it is bound to \
+             another machine, contact the vendor to re-arm the code.",
+            manifest.version
+        );
+        return Err(CliError::status(3));
+    }
+    if opts.check {
+        println!(
+            "\n  ✓ update available: {} → {} (license gate {}). Re-run without --check to install.",
+            current,
+            manifest.version,
+            if manifest.tier == "pro" {
+                "passed"
+            } else {
+                "not required"
+            }
+        );
+        return Ok(());
+    }
+
+    let target = std::env::current_exe()
+        .map_err(|e| CliError::fail(format!("ccos update: locating the running binary: {e}")))?;
+    if !opts.yes
+        && !confirm(&format!(
+            "  install ccos {} over {}?",
+            manifest.version,
+            target.display()
+        ))
+    {
+        return Err(CliError::fail(
+            "ccos update: not confirmed (non-interactive needs --yes) — nothing was written",
+        ));
+    }
+
+    // Download and hash-check BEFORE touching anything on disk at the target.
+    allowlist
+        .check(&manifest.url)
+        .or_else(|_| {
+            ccos::egress::EgressAllowlist::from_env()
+                .allowing(&manifest.url)
+                .check(&manifest.url)
+        })
+        .map_err(|e| CliError::fail(format!("ccos update: artifact host: {e}")))?;
+    println!("  downloading  {}", manifest.url);
+    let bytes = client
+        .get(&manifest.url)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| CliError::fail(format!("ccos update: downloading: {e}")))?
+        .bytes()
+        .await
+        .map_err(|e| CliError::fail(format!("ccos update: downloading: {e}")))?;
+    let got = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(&bytes);
+        format!("{:x}", h.finalize())
+    };
+    if got != manifest.sha256 {
+        return Err(CliError::fail(format!(
+            "ccos update: artifact hash MISMATCH (manifest {}, downloaded {}) — refusing to \
+             install; the mirror may be compromised",
+            &manifest.sha256[..12],
+            &got[..12]
+        )));
+    }
+
+    // Atomic install: write a temp sibling, set the mode, rename over the
+    // running binary (POSIX keeps the running inode alive).
+    let tmp = target.with_extension("update-tmp");
+    std::fs::write(&tmp, &bytes)
+        .map_err(|e| CliError::fail(format!("ccos update: writing {}: {e}", tmp.display())))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755));
+    }
+    std::fs::rename(&tmp, &target).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        CliError::fail(format!(
+            "ccos update: installing over {}: {e} (insufficient permissions? re-run with the \
+             rights the binary was installed with)",
+            target.display()
+        ))
+    })?;
+
+    // Prove the new binary runs before claiming success.
+    let reported = std::process::Command::new(&target)
+        .arg("--version")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    println!("\n  installed    {} ({reported})", target.display());
+    println!(
+        "  sha256       {} (verified against the signed manifest)",
+        &got[..16]
+    );
+    println!(
+        "\n  ✓ updated {current} → {} — run `ccos setup` to re-certify the deployment.",
+        manifest.version
+    );
+    Ok(())
+}
+
+/// Without the `license` feature there is no manifest verifier compiled in, so
+/// updating would mean installing unverified bytes — refused, fail-closed.
+#[cfg(not(feature = "license"))]
+async fn run_update(_opts: &UpdateOpts) -> CliResult {
+    Err(CliError::fail(
+        "ccos update: this build has no manifest verifier (rebuild with --features license) — \
+         refusing to install unverified releases",
+    ))
 }
 
 /// Load the host licensing and gate `feature`. Returns the licensing when **unlocked**; on the
@@ -3622,6 +3847,9 @@ COMMANDS:\n\
     \x20                          hashes; token verified locally before install)\n\
     license fingerprint        Print this machine's opaque fingerprint (for the\n\
     \x20                          counter's web-form claim flow)\n\
+    update --from <URL>        Fetch the vendor's signed release manifest, verify it\n\
+    \x20                          against the baked-in key, enforce the license for Pro\n\
+    \x20                          artifacts, hash-check and install (--check, --yes)\n\
 \n\
   CCOS v0.3 — Autonomous Context Runtime:\n\
     scan <path>                Scan a real workspace and ingest the delta\n\
@@ -3702,6 +3930,15 @@ mod tests {
         assert_eq!(o.dir, PathBuf::from("proj"));
         assert_eq!(o.report, Some(PathBuf::from("out.json")));
         assert_eq!(o.workspace, "ws.ccos");
+    }
+
+    #[test]
+    fn update_opts_parse_defaults_and_flags() {
+        let d = UpdateOpts::parse(&[]);
+        assert!(d.from.is_none() && !d.check && !d.yes);
+        let o = UpdateOpts::parse(&argv(&["--from", "https://releases.x", "--check", "--yes"]));
+        assert_eq!(o.from.as_deref(), Some("https://releases.x"));
+        assert!(o.check && o.yes);
     }
 
     #[test]
