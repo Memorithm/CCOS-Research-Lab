@@ -663,6 +663,7 @@ mod tests {
         Licensing::licensed(License {
             licensee: "acme".to_string(),
             expires_at: None,
+            machine: None,
         })
     }
 

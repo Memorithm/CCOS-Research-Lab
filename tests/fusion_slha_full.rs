@@ -83,6 +83,7 @@ fn pro_tier_unlocks_and_backend_roundtrips() {
     let l = Licensing::licensed(License {
         licensee: "acme".to_string(),
         expires_at: None,
+        machine: None,
     });
     let access = FullSlhaAccess::unlock(&l, NOW).unwrap();
 
@@ -117,6 +118,7 @@ fn informed_eviction_respects_budget_and_pins_sinks() {
     let l = Licensing::licensed(License {
         licensee: "acme".to_string(),
         expires_at: None,
+        machine: None,
     });
     let access = FullSlhaAccess::unlock(&l, NOW).unwrap();
 
@@ -146,6 +148,7 @@ fn score_all_ranks_live_pages_descending() {
     let l = Licensing::licensed(License {
         licensee: "acme".to_string(),
         expires_at: None,
+        machine: None,
     });
     let access = FullSlhaAccess::unlock(&l, NOW).unwrap();
     let mut be = access.scirust_backend(8 * HOT_BYTES);
@@ -163,6 +166,7 @@ fn latent_safety_guard_passes_benign_and_flags_injection() {
     let l = Licensing::licensed(License {
         licensee: "acme".to_string(),
         expires_at: None,
+        machine: None,
     });
     let access = FullSlhaAccess::unlock(&l, NOW).unwrap();
 
@@ -202,6 +206,7 @@ fn flag_warm_round_trips_through_tile_abi() {
     let l = Licensing::licensed(License {
         licensee: "acme".to_string(),
         expires_at: None,
+        machine: None,
     });
     let access = FullSlhaAccess::unlock(&l, NOW).unwrap();
     let mut be = access.scirust_backend(8 * HOT_BYTES);

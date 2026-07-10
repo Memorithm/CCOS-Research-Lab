@@ -170,6 +170,7 @@ mod tests {
         Licensing::licensed(License {
             licensee: "acme".to_string(),
             expires_at: None,
+            machine: None,
         })
     }
 
@@ -185,6 +186,7 @@ mod tests {
         let l = Licensing::licensed(License {
             licensee: "acme".to_string(),
             expires_at: Some(NOW - 1),
+            machine: None,
         });
         assert!(CausalCascadeAccess::unlock(&l, NOW).is_err());
     }

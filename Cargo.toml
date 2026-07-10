@@ -296,6 +296,11 @@ members = [
     "crates/ccos-scirust-python",
     "crates/ccos-octasoma",
     "crates/ccos-octacore",
+    # The vendor-side license claim counter (ccos-license-server +
+    # ccos-license-admin). A tool, not a runtime dependency: the default `ccos`
+    # build's dependency tree is untouched (the byte-identity guard still holds)
+    # and runtime license verification stays fully offline.
+    "tools/ccos-license-server",
 ]
 default-members = ["."]
 

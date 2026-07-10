@@ -1366,6 +1366,7 @@ mod access_tests {
         let pro = Licensing::licensed(License {
             licensee: "acme".into(),
             expires_at: None,
+            machine: None,
         });
         let access =
             RetrievalAccess::unlock(&pro, now).expect("pro tier unlocks adaptive retrieval");

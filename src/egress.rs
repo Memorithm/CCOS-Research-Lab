@@ -91,6 +91,24 @@ impl EgressAllowlist {
         a
     }
 
+    /// This policy **plus** one explicitly-named endpoint — the consent path for
+    /// a command whose destination the operator typed on the command line (e.g.
+    /// `ccos license claim --from <url>`). Accepts a bare host or a full URL
+    /// (the host is extracted). An explicit argument is an announced, per-call
+    /// consent; it never widens the ambient policy other calls read from the
+    /// environment.
+    pub fn allowing(mut self, url_or_host: &str) -> Self {
+        let host = if url_or_host.contains("://") {
+            extract_host(url_or_host)
+        } else {
+            Some(url_or_host.to_string())
+        };
+        if let Some(h) = host {
+            self.allowed.insert(h.to_lowercase());
+        }
+        self
+    }
+
     /// The current allowlist (sorted, for diagnostics).
     pub fn allowed_hosts(&self) -> Vec<String> {
         let mut v: Vec<String> = self.allowed.iter().cloned().collect();
@@ -177,6 +195,20 @@ mod tests {
             EgressError::HostNotAllowed { host, .. } => assert_eq!(host, "api.anthropic.com"),
             EgressError::Malformed(_) => panic!("expected HostNotAllowed"),
         }
+    }
+
+    #[test]
+    fn allowing_admits_one_explicit_endpoint_without_widening_others() {
+        let a = al().allowing("https://licensing.example.app/claim");
+        assert!(a.check("https://licensing.example.app/claim").is_ok());
+        assert!(
+            a.check("https://other.example.app/").is_err(),
+            "one explicit consent does not open the policy to other hosts"
+        );
+        // A bare host works too, and loopback stays allowed.
+        let b = al().allowing("licensing.example.app");
+        assert!(b.check("https://licensing.example.app/x").is_ok());
+        assert!(b.check("http://localhost:11434/").is_ok());
     }
 
     #[test]

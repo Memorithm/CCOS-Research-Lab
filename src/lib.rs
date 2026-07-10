@@ -65,6 +65,10 @@
 //! - [`mcp`] — a dependency-free [Model Context Protocol](https://modelcontextprotocol.io)
 //!   server (stdio JSON-RPC 2.0) that exposes the [`external_memory`] façade as MCP
 //!   tools, so any MCP-compatible agent can use CCOS as native working memory.
+//! - [`claim`] — the shared half of the one-time license-claim protocol
+//!   (claim-code format, code/machine hashing): the client (`ccos license
+//!   claim`) and the vendor counter (`tools/ccos-license-server`) both build
+//!   on it, so the two sides can never drift.
 //! - [`setup`] — the `ccos setup` engine: host probe, consent-gated agent-host
 //!   wiring (`.mcp.json`), the deterministic first-run self-test battery, and
 //!   the sealed `setup_report.json` verdict an MCP agent relays to the user.
@@ -103,6 +107,7 @@
 
 pub mod adversarial;
 pub mod agent_session;
+pub mod claim;
 pub mod cold_index;
 pub mod compressor;
 pub mod conformal;
