@@ -65,6 +65,9 @@
 //! - [`mcp`] — a dependency-free [Model Context Protocol](https://modelcontextprotocol.io)
 //!   server (stdio JSON-RPC 2.0) that exposes the [`external_memory`] façade as MCP
 //!   tools, so any MCP-compatible agent can use CCOS as native working memory.
+//! - [`setup`] — the `ccos setup` engine: host probe, consent-gated agent-host
+//!   wiring (`.mcp.json`), the deterministic first-run self-test battery, and
+//!   the sealed `setup_report.json` verdict an MCP agent relays to the user.
 //! - [`postmortem`] — an interactive **time-travel debugger** over an
 //!   [`agent_session::AgentSession`]: walk a recorded (or persisted) cognitive
 //!   timeline by hand, inspect how the recalled context window drifts, and diff two
@@ -190,6 +193,7 @@ pub mod retrodict;
 #[cfg(feature = "rsi")]
 pub mod rsi_bridge;
 pub mod sanitizer;
+pub mod setup;
 pub mod spectral;
 pub mod trace;
 pub mod util;

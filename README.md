@@ -307,6 +307,21 @@ honest scope (what it does *not* cover: homoglyphs, semantic paraphrase).
 
 ## Quickstart — give your agent a memory
 
+One command builds, installs, wires the agent host and self-tests the result:
+
+```bash
+sh scripts/install.sh          # build → install → doctor → `ccos setup --yes`
+```
+
+`ccos setup` probes the host, registers the MCP server in the project's
+`.mcp.json` (idempotent, consent-gated), runs a deterministic first-run
+self-test battery against the real kernel, and seals the verdict into
+`setup_report.json` — which any MCP agent relays to you via the
+`ccos://setup/report` resource. The certification comes from code, not from a
+model. See [`docs/SETUP.md`](docs/SETUP.md).
+
+Or wire it by hand:
+
 ```bash
 cargo build --release          # → ./target/release/ccos
 ```
