@@ -313,6 +313,12 @@ fn resource_specs() -> Value {
             "name": "CCOS cognitive timeline",
             "description": "The event-sourced journal of every memory operation this session (audit / replay).",
             "mimeType": "text/plain"
+        },
+        {
+            "uri": "ccos://setup/report",
+            "name": "CCOS setup verdict",
+            "description": "The sealed installer report written by `ccos setup` (per-check pass/fail, wiring actions, host probe, content hash). Produced deterministically by the installer — relay its verdict to the user verbatim; the JSON is the source of truth, not this server's memory. Path: $CCOS_SETUP_REPORT or ./setup_report.json.",
+            "mimeType": "application/json"
         }
     ])
 }
@@ -998,6 +1004,24 @@ fn linearize_window(win: &RecallWindow, plain: bool) -> String {
 /// Execute a `resources/read`.
 fn read_resource(session: &mut AgentSession, params: &Value) -> Result<Value, (i64, String)> {
     let uri = params.get("uri").and_then(Value::as_str).unwrap_or("");
+    // The setup verdict is a JSON file, not session state — handle it before the
+    // text/plain arm. A missing report is announced as readable content (with the
+    // command that produces it), not a protocol error: the agent can relay it.
+    if uri == "ccos://setup/report" {
+        let path = crate::setup::report_path();
+        let (mime, text) = match std::fs::read_to_string(&path) {
+            Ok(json) => ("application/json", json),
+            Err(_) => (
+                "text/plain",
+                format!(
+                    "no setup report found at {} — run `ccos setup` to install, wire and \
+                     self-test this deployment (see docs/SETUP.md)",
+                    path.display()
+                ),
+            ),
+        };
+        return Ok(json!({ "contents": [{ "uri": uri, "mimeType": mime, "text": text }] }));
+    }
     let text = match uri {
         "ccos://session/context" => {
             // Budget tunable at launch without a flag.
@@ -1831,6 +1855,49 @@ mod tests {
             text.contains("file:src/a.rs"),
             "context resource linearises the working set: {text}"
         );
+    }
+
+    #[test]
+    fn setup_report_resource_reads_the_sealed_verdict_or_points_at_setup() {
+        let mut s = AgentSession::new();
+        let read = |s: &mut AgentSession, id| {
+            handle(
+                s,
+                &req(
+                    id,
+                    "resources/read",
+                    json!({ "uri": "ccos://setup/report" }),
+                ),
+            )
+            .unwrap()
+        };
+        let dir =
+            std::env::temp_dir().join(format!("ccos-mcp-setup-report-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("setup_report.json");
+
+        // Both branches under ONE env-var binding (tests run in parallel threads
+        // and CCOS_SETUP_REPORT is process-global): missing file first, then the
+        // sealed verdict, against the same path.
+        std::env::set_var(crate::setup::REPORT_ENV, &path);
+
+        // Absent report → announced pointer to `ccos setup`, not a protocol error.
+        let r = read(&mut s, 1);
+        let text = r["result"]["contents"][0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("ccos setup"),
+            "a missing report points the agent at the installer: {text}"
+        );
+
+        // Present report → the JSON verdict, verbatim.
+        std::fs::write(&path, r#"{"schema":"ccos.setup.report/v1","ok":true}"#).unwrap();
+        let r = read(&mut s, 2);
+        assert_eq!(r["result"]["contents"][0]["mimeType"], "application/json");
+        let text = r["result"]["contents"][0]["text"].as_str().unwrap();
+        assert!(text.contains(r#""ok":true"#), "verbatim verdict: {text}");
+
+        std::env::remove_var(crate::setup::REPORT_ENV);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

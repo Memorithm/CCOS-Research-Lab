@@ -76,6 +76,24 @@ ccos doctor — deployment self-check
     - no vendor public key is set (both embedded keys are the all-zero placeholder) — Pro is fail-closed until a vendor key is set …
 ```
 
+### 2b. `ccos setup` — wire the agent host & certify the install
+
+After `doctor`, one more command wires and certifies the deployment
+(`scripts/install.sh` runs both):
+
+```sh
+cd /path/to/project && ccos setup --yes
+```
+
+`setup` probes the host, registers the MCP server in the project's `.mcp.json`
+(an idempotent merge — consent-gated, fail-closed on anything unparseable),
+runs a deterministic first-run self-test battery against the real kernel
+(ingest → causal recall → failure propagation → hash-chain integrity →
+checkpoint determinism → MCP handshake), and seals the verdict into
+`setup_report.json`. An MCP agent relays that verdict to the user through the
+`ccos://setup/report` resource — the report file, not the model, is the source
+of truth. Exit 0 only when every check passed. Full guide: [`SETUP.md`](SETUP.md).
+
 ## 3. MCP server
 
 Point your MCP gateway at the **installed release** binary and a workspace path:
