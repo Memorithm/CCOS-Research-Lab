@@ -133,6 +133,12 @@ Resolution order: `$CCOS_LICENSE` (token text inline) → `$CCOS_LICENSE_FILE` �
 
 Verification is **fully offline** — no network, no telemetry — so a customer can run air-gapped.
 
+**Selling annual, single-seat licenses at scale**: instead of mailing tokens by
+hand, run the claim counter — the vendor hands the customer a one-time
+`CCOS-XXXXX-…` code, and `ccos license claim <CODE> --from <url>` redeems it
+for a machine-bound token (verified locally before install; the runtime never
+contacts the counter again). See [`LICENSING_SERVER.md`](LICENSING_SERVER.md).
+
 ### 4b. Post-quantum licenses (SLH-DSA / FIPS 205, optional)
 
 For deployments that want a license signature that is conjectured secure against a large-scale

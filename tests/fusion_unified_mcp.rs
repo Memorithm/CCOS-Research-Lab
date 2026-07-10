@@ -39,6 +39,7 @@ fn pro(s: &mut AgentSession) {
     s.set_licensing(Licensing::licensed(License {
         licensee: "acme".into(),
         expires_at: None,
+        machine: None,
     }));
 }
 

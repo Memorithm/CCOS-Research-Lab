@@ -2300,6 +2300,7 @@ mod tests {
         pro.set_licensing(Licensing::licensed(License {
             licensee: "acme".into(),
             expires_at: None,
+            machine: None,
         }));
         pro.set_custom_authorities(map)
             .expect("Pro tier installs custom authorities");
@@ -2351,6 +2352,7 @@ mod tests {
         pro.set_licensing(Licensing::licensed(License {
             licensee: "acme".into(),
             expires_at: None,
+            machine: None,
         }));
         pro.enable_slhav2_embeddings()
             .expect("Pro tier enables slhav2 embeddings");

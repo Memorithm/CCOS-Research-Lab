@@ -131,12 +131,26 @@ pub struct License {
     pub licensee: String,
     /// Expiry in unix seconds; `None` = perpetual.
     pub expires_at: Option<u64>,
+    /// Machine fingerprint this **single-seat** license is bound to (an opaque
+    /// hash — see [`crate::claim::machine_fingerprint_of`]); `None` = floating.
+    pub machine: Option<String>,
 }
 
 impl License {
     /// Whether the license is still in force at `now` (unix seconds).
     pub fn is_valid_at(&self, now: u64) -> bool {
         self.expires_at.is_none_or(|e| now <= e)
+    }
+
+    /// Whether this license may run on the host with fingerprint `host_fp`.
+    /// A floating license (no binding) runs anywhere; a bound license requires
+    /// an exact fingerprint match — and therefore **fails closed** on a host
+    /// with no derivable fingerprint at all (`host_fp = None`).
+    pub fn machine_ok(&self, host_fp: Option<&str>) -> bool {
+        match &self.machine {
+            None => true,
+            Some(bound) => host_fp == Some(bound.as_str()),
+        }
     }
 }
 
@@ -215,6 +229,10 @@ struct TokenPayload {
     /// Expiry, unix seconds. Absent = perpetual.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     exp: Option<u64>,
+    /// Machine fingerprint (single-seat binding; see [`crate::claim`]). Absent =
+    /// floating license — older tokens deserialize unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    machine: Option<String>,
 }
 
 /// URL-safe base64 **without padding** (RFC 4648 §5: `-`/`_`, no `=`). Hand-rolled so neither license
@@ -280,10 +298,27 @@ pub(crate) fn b64url_decode(s: &str) -> Option<Vec<u8>> {
 /// bytes (JWT convention). Vendor-side tooling and the tests use this; the engine only ever *verifies*.
 #[cfg(feature = "license")]
 pub fn sign_token(signing_seed: &[u8; 32], licensee: &str, exp: Option<u64>) -> String {
+    sign_token_bound(signing_seed, licensee, exp, None)
+}
+
+/// [`sign_token`] with an optional **single-seat machine binding**: the opaque
+/// fingerprint (see [`crate::claim::machine_fingerprint_of`]) is carried inside
+/// the signed payload, so the binding is exactly as tamper-proof as the license
+/// itself. `None` emits the historical floating-token bytes unchanged. The claim
+/// counter (`tools/ccos-license-server`) signs with this at claim time — the
+/// moment the machine is first known.
+#[cfg(feature = "license")]
+pub fn sign_token_bound(
+    signing_seed: &[u8; 32],
+    licensee: &str,
+    exp: Option<u64>,
+    machine: Option<&str>,
+) -> String {
     use ed25519_dalek::{Signer, SigningKey};
     let payload = TokenPayload {
         licensee: licensee.to_string(),
         exp,
+        machine: machine.map(str::to_string),
     };
     let json = serde_json::to_vec(&payload).expect("payload serialises");
     let signing_input = b64url_encode(&json);
@@ -363,6 +398,7 @@ impl LicenseVerifier for Ed25519Verifier {
         Ok(License {
             licensee: payload.licensee,
             expires_at: payload.exp,
+            machine: payload.machine,
         })
     }
 }
@@ -423,6 +459,7 @@ pub fn sign_token_slhdsa(signing_sk: &[u8; 64], licensee: &str, exp: Option<u64>
     let payload = TokenPayload {
         licensee: licensee.to_string(),
         exp,
+        machine: None,
     };
     let json = serde_json::to_vec(&payload).expect("payload serialises");
     let payload_b64 = b64url_encode(&json);
@@ -507,6 +544,7 @@ impl LicenseVerifier for SlhDsaVerifier {
         Ok(License {
             licensee: payload.licensee,
             expires_at: payload.exp,
+            machine: payload.machine,
         })
     }
 }
@@ -527,6 +565,15 @@ pub fn load_license_blob() -> Option<Vec<u8>> {
         .map(std::path::PathBuf::from)
         .or_else(default_license_path)?;
     std::fs::read(path).ok()
+}
+
+/// Where `ccos license claim` **installs** a received token: `$CCOS_LICENSE_FILE`
+/// when set, else the XDG default `load_license_blob` reads from — writer and
+/// reader resolve the same path, so a claimed license is found on the next run.
+pub fn license_install_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("CCOS_LICENSE_FILE")
+        .map(std::path::PathBuf::from)
+        .or_else(default_license_path)
 }
 
 /// `$XDG_CONFIG_HOME/ccos/license`, else `$HOME/.config/ccos/license`.
@@ -606,31 +653,40 @@ impl Licensing {
         let Some(blob) = load_license_blob() else {
             return Self::community();
         };
-        // Dispatch on the scheme tag. A token is SLH-DSA iff its trimmed text starts with
-        // `slhdsa.`; everything else is treated as the legacy ed25519 `payload.sig` form.
-        #[cfg(feature = "license-pq")]
-        {
-            let is_pq = std::str::from_utf8(&blob)
-                .map(|s| s.trim().starts_with("slhdsa."))
-                .unwrap_or(false);
-            if is_pq {
-                return Self::from_blob(&SlhDsaVerifier::new(), &blob, now);
+        match verify_token_blob(&blob, now) {
+            Ok(license) => {
+                Self::licensed(license).enforce_machine_binding(crate::claim::host_fingerprint())
             }
+            Err(_) => Self::community(),
         }
-        #[cfg(feature = "license")]
-        {
-            let is_pq = std::str::from_utf8(&blob)
-                .map(|s| s.trim().starts_with("slhdsa."))
-                .unwrap_or(false);
-            if !is_pq {
-                return Self::from_blob(&Ed25519Verifier::new(), &blob, now);
-            }
-        }
-        // No compiled-in verifier matches this token's scheme (or no verifier at all) →
-        // community. The core is never gated.
-        let _ = (blob, now);
-        Self::community()
     }
+}
+
+/// Verify a candidate token `blob` against the compiled-in verifier(s), without
+/// reading the host license or enforcing the machine binding — the **pre-install
+/// check** `ccos license claim` runs on a token it just received, and the
+/// dispatch [`Licensing::detect`] builds on. The token's scheme tag selects the
+/// verifier: a `slhdsa.`-prefixed token goes to the SLH-DSA verifier (when
+/// `license-pq` is compiled in), anything else to ed25519 (when `license` is).
+/// No matching compiled-in verifier is an explicit error, never a silent pass.
+pub fn verify_token_blob(blob: &[u8], now: u64) -> Result<License, LicenseError> {
+    let is_pq = std::str::from_utf8(blob)
+        .map(|s| s.trim().starts_with("slhdsa."))
+        .unwrap_or(false);
+    #[cfg(feature = "license-pq")]
+    if is_pq {
+        return SlhDsaVerifier::new().verify(blob, now);
+    }
+    #[cfg(feature = "license")]
+    if !is_pq {
+        return Ed25519Verifier::new().verify(blob, now);
+    }
+    let _ = (blob, now, is_pq);
+    Err(LicenseError::Invalid(
+        "no license verifier compiled in this build matches the token's scheme (rebuild with \
+         --features license and/or license-pq)"
+            .into(),
+    ))
 }
 
 /// Runtime license state and the **feature gate**. Holds an optional verified [`License`] and never
@@ -659,6 +715,35 @@ impl Licensing {
         match verifier.verify(blob, now) {
             Ok(license) => Self::licensed(license),
             Err(_) => Self::community(),
+        }
+    }
+
+    /// Enforce a **single-seat machine binding**: a license bound to a machine
+    /// other than `host_fp` (or bound while this host has no derivable
+    /// fingerprint at all) drops to the community tier with one explicit log
+    /// line — an announced refusal, never a silent downgrade, and the core is
+    /// never touched. Floating licenses pass through unchanged. Pure in
+    /// `host_fp` so the policy is unit-testable; [`Licensing::detect`] feeds it
+    /// the real [`crate::claim::host_fingerprint`].
+    pub fn enforce_machine_binding(self, host_fp: Option<String>) -> Self {
+        match &self.license {
+            Some(l) if !l.machine_ok(host_fp.as_deref()) => {
+                if host_fp.is_none() {
+                    eprintln!(
+                        "[ccos] license: this single-seat license is machine-bound but no stable \
+                         machine id was found on this host (checked $CCOS_MACHINE_ID, \
+                         /etc/machine-id) — running as community (the core is unaffected)."
+                    );
+                } else {
+                    eprintln!(
+                        "[ccos] license: this single-seat license is bound to another machine — \
+                         running as community (the core is unaffected). Re-claim on this machine \
+                         with `ccos license claim`, or contact the vendor to re-arm the code."
+                    );
+                }
+                Self::community()
+            }
+            _ => self,
         }
     }
 
@@ -710,7 +795,66 @@ mod tests {
         License {
             licensee: "acme-corp".to_string(),
             expires_at,
+            machine: None,
         }
+    }
+
+    #[test]
+    fn machine_binding_is_enforced_fail_closed_and_announced() {
+        let bound = License {
+            licensee: "seat-1".to_string(),
+            expires_at: None,
+            machine: Some("fp-alpha".to_string()),
+        };
+        // Pure policy: right machine passes, wrong machine and no machine fail.
+        assert!(bound.machine_ok(Some("fp-alpha")));
+        assert!(!bound.machine_ok(Some("fp-beta")));
+        assert!(
+            !bound.machine_ok(None),
+            "no fingerprint at all fails closed"
+        );
+        // A floating license runs anywhere.
+        assert!(license(None).machine_ok(Some("fp-alpha")));
+        assert!(license(None).machine_ok(None));
+
+        // The gate: a bound license on the wrong host drops to community…
+        let l =
+            Licensing::licensed(bound.clone()).enforce_machine_binding(Some("fp-beta".to_string()));
+        assert_eq!(l.tier(NOW), Tier::Community);
+        let l = Licensing::licensed(bound.clone()).enforce_machine_binding(None);
+        assert_eq!(l.tier(NOW), Tier::Community);
+        // …and on the right host stays Pro; floating licenses are untouched.
+        let l = Licensing::licensed(bound).enforce_machine_binding(Some("fp-alpha".to_string()));
+        assert_eq!(l.tier(NOW), Tier::Pro);
+        let l = Licensing::licensed(license(None)).enforce_machine_binding(None);
+        assert_eq!(l.tier(NOW), Tier::Pro);
+    }
+
+    #[cfg(feature = "license")]
+    #[test]
+    fn bound_tokens_round_trip_the_machine_fingerprint() {
+        use ed25519_dalek::SigningKey;
+        const SEED: [u8; 32] = [7u8; 32];
+        let pk = SigningKey::from_bytes(&SEED).verifying_key().to_bytes();
+        let v = Ed25519Verifier::with_public_key(&pk);
+
+        let token = sign_token_bound(&SEED, "seat-corp", Some(NOW + 100), Some("fp-alpha"));
+        let lic = v.verify(token.as_bytes(), NOW).expect("verifies");
+        assert_eq!(lic.machine.as_deref(), Some("fp-alpha"));
+        assert_eq!(lic.licensee, "seat-corp");
+        // Unbound signing emits the historical floating shape (machine absent).
+        let token = sign_token(&SEED, "float-corp", None);
+        let lic = v.verify(token.as_bytes(), NOW).expect("verifies");
+        assert_eq!(lic.machine, None);
+        // The binding is inside the signed payload: altering it breaks the signature.
+        let token = sign_token_bound(&SEED, "seat-corp", None, Some("fp-alpha"));
+        let (payload, sig) = token.split_once('.').unwrap();
+        let mut json = b64url_decode(payload).unwrap();
+        let tampered_json = String::from_utf8(std::mem::take(&mut json))
+            .unwrap()
+            .replace("fp-alpha", "fp-evil!");
+        let tampered = format!("{}.{sig}", b64url_encode(tampered_json.as_bytes()));
+        assert!(v.verify(tampered.as_bytes(), NOW).is_err());
     }
 
     #[test]

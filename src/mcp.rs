@@ -1367,6 +1367,7 @@ mod tests {
         s.set_licensing(Licensing::licensed(License {
             licensee: "acme".into(),
             expires_at: None,
+            machine: None,
         }));
         let ok = call(&mut s, 2);
         let text = ok["result"]["content"][0]["text"].as_str().unwrap();
@@ -1403,6 +1404,7 @@ mod tests {
         s.set_licensing(Licensing::licensed(License {
             licensee: "acme".into(),
             expires_at: None,
+            machine: None,
         }));
         let mut st = ServerState::default();
         let exact = "pub fn query() -> i64 { 1 }";
@@ -1507,6 +1509,7 @@ mod tests {
         s.set_licensing(Licensing::licensed(License {
             licensee: "acme".into(),
             expires_at: None,
+            machine: None,
         }));
         let r = handle(&mut s, &fb_req(2)).unwrap();
         assert_eq!(r["result"]["isError"], true);

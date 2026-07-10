@@ -220,6 +220,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ccos-license-server"
+version = "0.1.0"
+dependencies = [
+ "ccos",
+ "ed25519-dalek",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ccos-memory-runtime"
 version = "0.1.0"
 dependencies = [

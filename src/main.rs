@@ -108,6 +108,9 @@ async fn main() {
         "stdin" => run_stdin_cmd(rest),
         "doctor" => run_doctor(&DoctorOpts::parse(rest)),
         "setup" => run_setup(&SetupOpts::parse(rest)),
+        "license" if rest.first().map(String::as_str) == Some("claim") => {
+            run_license_claim(&rest[1..]).await
+        }
         "license" => run_license(rest),
         "tensions" => run_tensions(&TensionsOpts::parse(rest)),
         "audit" => run_audit(&AuditOpts::parse(rest)),
@@ -718,6 +721,148 @@ fn run_license(_args: &[String]) -> CliResult {
             );
         }
     }
+    Ok(())
+}
+
+/// `ccos license claim <CODE> --from <URL>` — redeem a **one-time claim code**
+/// against the vendor's claim counter and install the returned single-seat
+/// license (see `docs/LICENSING_SERVER.md` and `ccos::claim`). The exchange
+/// sends exactly two hashes — `sha256(code)` and the opaque machine
+/// fingerprint — never the code, never a hardware identifier. The received
+/// token is verified **locally** against the public key baked into this binary
+/// before anything is written (a compromised counter can refuse service, never
+/// mint), then installed at `$CCOS_LICENSE_FILE` / the XDG default. The
+/// explicit `--from` endpoint is the egress consent for this one call.
+async fn run_license_claim(args: &[String]) -> CliResult {
+    let usage = || {
+        CliError::usage(
+            "usage: ccos license claim <CCOS-XXXXX-XXXXX-XXXXX-XXXXX> --from <https://host>\n\
+             (the claim endpoint is explicit by design — see docs/LICENSING_SERVER.md)",
+        )
+    };
+    let mut code_arg: Option<&str> = None;
+    let mut from: Option<&str> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--from" => {
+                i += 1;
+                from = args.get(i).map(String::as_str);
+            }
+            a if !a.starts_with("--") && code_arg.is_none() => code_arg = Some(a),
+            _ => {}
+        }
+        i += 1;
+    }
+    let (Some(code_arg), Some(from)) = (code_arg, from) else {
+        return Err(usage());
+    };
+    let Some(code) = ccos::claim::canonical_code(code_arg) else {
+        return Err(CliError::fail(
+            "ccos license claim: that is not a claim code (expected \
+             CCOS-XXXXX-XXXXX-XXXXX-XXXXX, symbols 0-9/A-Z without I L O U)",
+        ));
+    };
+    let Some(machine) = ccos::claim::host_fingerprint() else {
+        return Err(CliError::fail(
+            "ccos license claim: no stable machine id on this host (checked $CCOS_MACHINE_ID, \
+             /etc/machine-id, /var/lib/dbus/machine-id) — a single-seat license needs one. \
+             Set CCOS_MACHINE_ID to a stable identifier of your choice and re-run.",
+        ));
+    };
+    // The explicit --from endpoint is this call's egress consent; the ambient
+    // policy for every other call is untouched. Still announced, still checked.
+    let allowlist = ccos::egress::EgressAllowlist::from_env().allowing(from);
+    allowlist
+        .check(from)
+        .map_err(|e| CliError::fail(format!("ccos license claim: {e}")))?;
+    if from.starts_with("http://")
+        && ccos::egress::EgressAllowlist::localhost_only()
+            .check(from)
+            .is_err()
+    {
+        eprintln!("[ccos] warning: claiming over plain http to a non-local host — use https.");
+    }
+    let url = format!("{}{}", from.trim_end_matches('/'), ccos::claim::CLAIM_PATH);
+    println!("ccos license claim — one-time code redemption\n");
+    println!("  endpoint     {url}");
+    println!("  sending      sha256(code) + machine fingerprint (hashes only; nothing else)");
+
+    let request = ccos::claim::ClaimRequest {
+        schema: ccos::claim::CLAIM_SCHEMA.to_string(),
+        code_hash: ccos::claim::code_hash(&code),
+        machine: machine.clone(),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| CliError::fail(format!("ccos license claim: http client: {e}")))?;
+    let response = client
+        .post(&url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| CliError::fail(format!("ccos license claim: request failed: {e}")))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| CliError::fail(format!("ccos license claim: reading response: {e}")))?;
+    if !status.is_success() {
+        let reason = serde_json::from_str::<ccos::claim::ClaimErr>(&body)
+            .map(|e| e.error)
+            .unwrap_or_else(|_| body.trim().to_string());
+        return Err(CliError::fail(format!(
+            "ccos license claim: refused by the counter ({status}): {reason}"
+        )));
+    }
+    let ok: ccos::claim::ClaimOk = serde_json::from_str(&body)
+        .map_err(|e| CliError::fail(format!("ccos license claim: malformed response: {e}")))?;
+
+    // Trust the signature, not the server: verify against OUR baked-in key
+    // and OUR fingerprint before writing anything.
+    let now = ccos::license::now_unix();
+    let license = ccos::license::verify_token_blob(ok.token.as_bytes(), now)
+        .map_err(|e| CliError::fail(format!("ccos license claim: token did not verify: {e}")))?;
+    if !license.machine_ok(Some(&machine)) {
+        return Err(CliError::fail(
+            "ccos license claim: the counter returned a token bound to a different machine — \
+             refusing to install it. Contact the vendor.",
+        ));
+    }
+    if !license.is_valid_at(now) {
+        eprintln!("[ccos] warning: the received license is already expired — installing anyway (it names you for support), but the tier will read community.");
+    }
+    let Some(path) = ccos::license::license_install_path() else {
+        return Err(CliError::fail(
+            "ccos license claim: nowhere to install (no $CCOS_LICENSE_FILE, no $XDG_CONFIG_HOME, \
+             no $HOME)",
+        ));
+    };
+    ccos::util::write_durable(&path, format!("{}\n", ok.token).as_bytes()).map_err(|e| {
+        CliError::fail(format!(
+            "ccos license claim: writing {}: {e}",
+            path.display()
+        ))
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    println!("\n  licensee     {}", license.licensee);
+    match license.expires_at {
+        Some(exp) => println!(
+            "  expires      {}",
+            chrono::DateTime::from_timestamp(exp as i64, 0)
+                .map(|d| d.format("%Y-%m-%d").to_string())
+                .unwrap_or_else(|| exp.to_string())
+        ),
+        None => println!("  expires      never (perpetual)"),
+    }
+    println!("  seat         bound to this machine (opaque fingerprint)");
+    println!("  installed    {}", path.display());
+    println!("\n  ✓ license claimed — run `ccos doctor` to confirm the PRO tier.");
     Ok(())
 }
 
@@ -3448,6 +3593,10 @@ COMMANDS:\n\
         --dir <D>              Project directory (default .)\n\
         --report <F>           Report path (default <dir>/setup_report.json)\n\
         --workspace <W>        Workspace the MCP server persists (default workspace.ccos)\n\
+    license                    Show the active tier (community / PRO) and the Pro feature set\n\
+    license claim <CODE> --from <URL>  Redeem a one-time claim code against the vendor's\n\
+    \x20                          counter and install the single-seat license (sends only\n\
+    \x20                          hashes; token verified locally before install)\n\
 \n\
   CCOS v0.3 — Autonomous Context Runtime:\n\
     scan <path>                Scan a real workspace and ingest the delta\n\
