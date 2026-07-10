@@ -111,6 +111,22 @@ async fn main() {
         "license" if rest.first().map(String::as_str) == Some("claim") => {
             run_license_claim(&rest[1..]).await
         }
+        // The web-form flow of the shared-hosting counter (claim.php): the
+        // customer pastes this fingerprint next to their claim code. Same
+        // opaque hash the CLI claim sends — never a raw hardware identifier.
+        "license" if rest.first().map(String::as_str) == Some("fingerprint") => {
+            match ccos::claim::host_fingerprint() {
+                Some(fp) => {
+                    println!("{fp}");
+                    Ok(())
+                }
+                None => Err(CliError::fail(
+                    "ccos license fingerprint: no stable machine id on this host (checked \
+                     $CCOS_MACHINE_ID, /etc/machine-id, /var/lib/dbus/machine-id). Set \
+                     CCOS_MACHINE_ID to a stable identifier of your choice and re-run.",
+                )),
+            }
+        }
         "license" => run_license(rest),
         "tensions" => run_tensions(&TensionsOpts::parse(rest)),
         "audit" => run_audit(&AuditOpts::parse(rest)),
@@ -783,7 +799,14 @@ async fn run_license_claim(args: &[String]) -> CliResult {
     {
         eprintln!("[ccos] warning: claiming over plain http to a non-local host — use https.");
     }
-    let url = format!("{}{}", from.trim_end_matches('/'), ccos::claim::CLAIM_PATH);
+    // A daemon counter serves CLAIM_PATH under its root; the shared-hosting
+    // variant IS the endpoint file — an explicit `…/claim.php` is used verbatim.
+    let base = from.trim_end_matches('/');
+    let url = if base.ends_with(".php") {
+        base.to_string()
+    } else {
+        format!("{base}{}", ccos::claim::CLAIM_PATH)
+    };
     println!("ccos license claim — one-time code redemption\n");
     println!("  endpoint     {url}");
     println!("  sending      sha256(code) + machine fingerprint (hashes only; nothing else)");
@@ -3597,6 +3620,8 @@ COMMANDS:\n\
     license claim <CODE> --from <URL>  Redeem a one-time claim code against the vendor's\n\
     \x20                          counter and install the single-seat license (sends only\n\
     \x20                          hashes; token verified locally before install)\n\
+    license fingerprint        Print this machine's opaque fingerprint (for the\n\
+    \x20                          counter's web-form claim flow)\n\
 \n\
   CCOS v0.3 — Autonomous Context Runtime:\n\
     scan <path>                Scan a real workspace and ingest the delta\n\
