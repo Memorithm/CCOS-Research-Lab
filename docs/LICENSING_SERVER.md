@@ -182,6 +182,42 @@ phones anywhere afterwards. The token installs to `$CCOS_LICENSE_FILE` or
 counter entirely and receive the token out-of-band, exactly as before
 ([`DEPLOYMENT.md`](DEPLOYMENT.md) §4).
 
+## Updates — the private-repo distribution loop
+
+With the premium repository private, customers receive **binaries**, and
+`ccos update` closes the loop with the same trust root as everything else.
+A release is two static files — any web space serves them, including the
+same shared hosting as the claim counter:
+
+```sh
+# vendor, per release:
+cargo build --release --features llm,license
+CCOS_LICENSE_SIGNING_SEED=<64-hex> ccos-license-admin manifest \
+  --version 0.5.0 --binary target/release/ccos \
+  --url https://licensing.memorithm.fr/releases/ccos-0.5.0
+# upload the binary at that URL + release.manifest next to it
+
+# customer:
+ccos update --from https://licensing.memorithm.fr/releases --check   # report only
+ccos update --from https://licensing.memorithm.fr/releases --yes     # install
+```
+
+What the updater enforces, in order — every refusal announced:
+
+1. **Signature first.** The manifest (`ccos-release.<payload>.<sig>`, the
+   scheme tag bound into the signed bytes so tokens and manifests can never
+   be replayed for one another) must verify against the vendor key **baked
+   into the running binary**. A hijacked mirror or DNS can serve nothing the
+   vendor did not sign.
+2. **The annual, single-seat gate.** A `tier: "pro"` release requires an
+   active license on this machine at update time — expired or wrong-machine
+   reads as community, the update is refused with the renewal path, and the
+   installed version keeps working (no kill-switch, ever).
+3. **Artifact integrity.** The download must match the manifest's SHA-256
+   byte-for-byte before anything is written; the install is an atomic rename
+   over the running binary, and the new binary is executed (`--version`)
+   before success is claimed. Re-certify with `ccos setup` after.
+
 ## Threat model, honestly
 
 | scenario | outcome |

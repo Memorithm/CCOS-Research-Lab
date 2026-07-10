@@ -69,6 +69,9 @@
 //!   (claim-code format, code/machine hashing): the client (`ccos license
 //!   claim`) and the vendor counter (`tools/ccos-license-server`) both build
 //!   on it, so the two sides can never drift.
+//! - [`release`] — signed release manifests: `ccos update` verifies a fetched
+//!   manifest against the baked-in vendor key before downloading anything, and
+//!   gates Pro artifacts on the active (annual, single-seat) license.
 //! - [`setup`] — the `ccos setup` engine: host probe, consent-gated agent-host
 //!   wiring (`.mcp.json`), the deterministic first-run self-test battery, and
 //!   the sealed `setup_report.json` verdict an MCP agent relays to the user.
@@ -193,6 +196,7 @@ pub mod parser;
 pub mod persist;
 pub mod postmortem;
 pub mod query;
+pub mod release;
 pub mod retrieval;
 pub mod retrodict;
 #[cfg(feature = "rsi")]
