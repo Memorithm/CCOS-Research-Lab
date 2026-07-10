@@ -19,7 +19,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   # Le cœur et les features testées ici sont std-only / crates publiques. Les
-  # features `scirust`/`forge`/`octasoma`/`ccos` (dépôts git CHECKUPAUTO) ne
+  # features `scirust`/`forge`/`octasoma`/`ccos` (dépôts git Memorithm) ne
   # sont pas construites ici — mais ATTENTION : même non activées, cargo
   # clone ces dépôts pour vérifier le lock sous `--locked`. La CI exige donc
   # que ces dépôts restent PUBLICS et que les révisions épinglées dans

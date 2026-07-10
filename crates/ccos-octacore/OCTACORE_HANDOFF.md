@@ -1,5 +1,5 @@
 > **MISSION ACCOMPLISHED (2026-07-02).** This runbook is retired. The
-> standalone `CHECKUPAUTO/octacore` repository was published, evolved (it grew
+> standalone `Memorithm/octacore` repository was published, evolved (it grew
 > the MCP server), and its evolution has been **merged back** into this staging
 > (PR #22) — which is now the **canonical home** of the crate. The standalone
 > repository is archived (read-only); nothing publishes to it anymore. To
@@ -21,13 +21,13 @@
 # OCTACORE — integration runbook (read me first)
 
 You are Claude Code in a fresh session. Your job: **publish the OctaCore crate in
-this branch to the `CHECKUPAUTO/octacore` repository**, autonomously. The human
+this branch to the `Memorithm/octacore` repository**, autonomously. The human
 should not have to do anything else. Don't ask for confirmation unless genuinely
 blocked.
 
 ## What OctaCore is (keep this framing honest)
 
-The **intelligent assembly of the CHECKUPAUTO memory triad** into one recall cascade
+The **intelligent assembly of the Memorithm memory triad** into one recall cascade
 — not a fourth memory:
 
 - **CCOS** (causal) narrows a query to a small causal region.
@@ -55,15 +55,15 @@ Root = the standalone crate: `Cargo.toml`, `src/lib.rs`, `examples/`, `README.md
 
 ## Steps
 
-0. **Write access to `CHECKUPAUTO/octacore`** is required — check it (list branches);
-   if not in this session's scope, stop and say so. `CHECKUPAUTO/octasoma` is public.
+0. **Write access to `Memorithm/octacore`** is required — check it (list branches);
+   if not in this session's scope, stop and say so. `Memorithm/octasoma` is public.
 1. **Get the files.** If this file is in your checkout you have them; else:
-   `git fetch https://github.com/CHECKUPAUTO/octasoma octacore && git checkout FETCH_HEAD`.
+   `git fetch https://github.com/Memorithm/octasoma octacore && git checkout FETCH_HEAD`.
    Take the files/tree only — not OctaSoma's history.
 2. **Verify:** `cargo build` · `cargo test` (unit tests + doctest) · `cargo fmt --all
    -- --check` · `cargo clippy --all-targets -- -D warnings`. Optional:
    `cargo build --features ccos,slha`. Fix before publishing if not green.
-3. **Publish** these files at the repo root of `CHECKUPAUTO/octacore` as a clean
+3. **Publish** these files at the repo root of `Memorithm/octacore` as a clean
    initial commit (detect the default branch; overwrite any auto-generated
    README/LICENSE). Do **not** open a PR unless asked.
 4. **Exclude this runbook** (`rm OCTACORE_HANDOFF.md` before committing).

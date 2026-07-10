@@ -1,6 +1,6 @@
 # OctaSoma — ecosystem integration plan (CCOS · SLHAv2)
 
-A grounded plan for wiring OctaSoma into the CHECKUPAUTO stack. Interfaces below
+A grounded plan for wiring OctaSoma into the Memorithm stack. Interfaces below
 are quoted from the actual source of each project.
 
 ## The stack

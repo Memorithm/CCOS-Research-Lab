@@ -20,7 +20,7 @@
 //!     kernel.observe(reply)  (store durable facts the assistant produced)
 //! ```
 //!
-//! See [`docs/integration-kernel.md`](https://github.com/checkupauto/octasoma/blob/master/docs/integration-kernel.md)
+//! See [`docs/integration-kernel.md`](https://github.com/Memorithm/octasoma/blob/master/docs/integration-kernel.md)
 //! for the full wiring guide, system-prompt block, and tool schemas.
 
 use std::io;

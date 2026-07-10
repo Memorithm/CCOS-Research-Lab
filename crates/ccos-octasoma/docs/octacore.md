@@ -1,6 +1,6 @@
 # OctaCore — the intelligent assembly of the triad
 
-**OctaCore** is the orchestrator that wires the three CHECKUPAUTO memories into a
+**OctaCore** is the orchestrator that wires the three Memorithm memories into a
 single recall: the [validated cascade](integration-ecosystem.md#measured-the-cascade-validated-at-real-scale)
 (99 % hit at ~26 tokens/turn on real data, ~137× fewer than naive injection — where
 no single brick suffices). It is **not a fourth memory**; it is the thin layer that
@@ -80,7 +80,7 @@ octacore  ──depends on──►  ccos, octasoma, scirust
 ```
 
 It cannot live *inside* octasoma (octasoma is the leaf dependency; reversing that
-would create a cycle). Because the standalone repo `checkupauto/octacore` does not
+would create a cycle). Because the standalone repo `Memorithm/octacore` does not
 exist yet, the crate is **staged inside this repo** under `octacore/` as its own
 isolated workspace — it builds and tests here against the local OctaSoma and does
 not affect octasoma's own build. To extract it into its own repository, see

@@ -1,6 +1,6 @@
 //! OctaCore (prototype) — the intelligent assembly of the triad as **one recall**.
 //!
-//! OctaCore wires the three CHECKUPAUTO memories into a single cascade — the
+//! OctaCore wires the three Memorithm memories into a single cascade — the
 //! deployment the benchmark validated (99 % hit at ~26 tokens/turn on real data,
 //! where no single brick suffices):
 //!

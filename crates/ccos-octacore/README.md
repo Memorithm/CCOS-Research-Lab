@@ -1,6 +1,6 @@
 # OctaCore
 
-**The intelligent assembly of the CHECKUPAUTO memory triad** — CCOS (causal),
+**The intelligent assembly of the Memorithm memory triad** — CCOS (causal),
 OctaSoma (semantic), SLHAv2 (attention) — into a single recall. OctaCore is not a
 fourth memory; it is the thin layer that makes the other three behave as one, the
 cascade the OctaSoma benchmark validated: **99 % hit at ~26 tokens/turn on real
@@ -87,7 +87,7 @@ Tool schemas, an example session, and other clients are documented in
 
 This directory — `octacore/` inside the OctaSoma repository (its own isolated
 workspace) — is the crate's **canonical home**. The standalone
-`CHECKUPAUTO/octacore` repository is **archived** (read-only): it was published from
+`Memorithm/octacore` repository is **archived** (read-only): it was published from
 here, evolved independently (it grew the MCP server), and that evolution has been
 merged back into this staging, which has been the newer of the two ever since.
 
@@ -110,4 +110,4 @@ in its final form.
 
 Dual-licensed: free for noncommercial & personal use under the
 [PolyForm Noncommercial License 1.0.0](LICENSE.md); commercial use requires a
-separate license (contact@checkupauto.fr). See [`LICENSING.md`](LICENSING.md).
+separate license (zekrititarek@gmail.com). See [`LICENSING.md`](LICENSING.md).

@@ -1,6 +1,6 @@
 //! # OctaCore — the intelligent assembly of the triad
 //!
-//! OctaCore wires the three CHECKUPAUTO memories into a single recall — the
+//! OctaCore wires the three Memorithm memories into a single recall — the
 //! cascade the OctaSoma benchmark validated (99 % hit at ~26 tokens/turn on real
 //! data, ~137× fewer than naive injection, where no single brick suffices):
 //!

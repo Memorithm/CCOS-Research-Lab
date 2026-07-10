@@ -7,7 +7,7 @@ name = "ccos"
 # product, not a core change.
 version = "0.4.0"
 edition = "2021"
-license = "LicenseRef-CheckupAuto-Dual"
+license = "LicenseRef-TarekZekriti-Dual"
 # The `ccos` CLI is the primary binary. Declaring it here keeps a bare
 # `cargo run` (e.g. the CI smoke `cargo run --features llm -- version`)
 # unambiguous now that the workspace also ships the `ccos-migrate` tool.
@@ -305,7 +305,7 @@ default-members = ["."]
 # but the workspace pin is uniform so a fused-member build never silently targets
 # an older toolchain.
 rust-version = "1.89"
-license = "LicenseRef-CheckupAuto-Dual"
+license = "LicenseRef-TarekZekriti-Dual"
 repository = "https://github.com/Memorithm/CCOS_EXTENDED"
 
 

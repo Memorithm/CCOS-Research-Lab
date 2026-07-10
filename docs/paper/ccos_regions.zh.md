@@ -617,4 +617,4 @@ al. SWE-bench: Can Language Models Resolve Real-World GitHub Issues?
 </div>
 
 [^1]: Causal Context Operating System（CCOS），一个开放的研究原型。
-    源代码、复现脚本与本文：<https://github.com/CHECKUPAUTO/CCOS>。
+    源代码、复现脚本与本文：<https://github.com/Memorithm/CCOS>。

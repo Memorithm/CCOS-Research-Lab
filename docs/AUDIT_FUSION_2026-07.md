@@ -58,7 +58,7 @@ La base de vendoring était le commit amont `fd7d1dd` ; l'amont a ensuite reçu
 ### 2.3 OctaSoma / OctaCore
 `ccos-octasoma/src` et `ccos-octacore/src/{mcp.rs,bin}` identiques à l'amont ;
 les seules divergences sont la chirurgie voulue : suppression du
-`[profile.release]` non-racine, licence `LicenseRef-CheckupAuto-Dual`,
+`[profile.release]` non-racine, licence `LicenseRef-TarekZekriti-Dual`,
 et l'inversion P2 (le module `ccos_adapter` amont supprimé, l'adaptateur
 `CcosScope` vivant côté CCOS dans `src/octacore_bridge.rs` — `cargo tree -p
 octacore | grep ccos` vide).

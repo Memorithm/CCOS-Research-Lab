@@ -740,7 +740,7 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 [[package]]
 name = "forge-core"
 version = "0.1.0"
-source = "git+https://github.com/CHECKUPAUTO/forge#5afe067b6d1223b096c39abcefb935856034ccb9"
+source = "git+https://github.com/Memorithm/forge#5afe067b6d1223b096c39abcefb935856034ccb9"
 dependencies = [
  "bincode",
  "rand 0.8.6",
@@ -2446,7 +2446,7 @@ dependencies = [
 [[package]]
 name = "scirust-evo"
 version = "0.1.0"
-source = "git+https://github.com/CHECKUPAUTO/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
+source = "git+https://github.com/Memorithm/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
 dependencies = [
  "rand 0.8.6",
  "rand_distr",
@@ -2458,7 +2458,7 @@ dependencies = [
 [[package]]
 name = "scirust-rsi"
 version = "0.1.0"
-source = "git+https://github.com/CHECKUPAUTO/scirust#5c7e43b399d3247d68a957faf5e13f147e48a7ef"
+source = "git+https://github.com/Memorithm/scirust#5c7e43b399d3247d68a957faf5e13f147e48a7ef"
 dependencies = [
  "rand 0.8.6",
  "rand_distr",
@@ -2468,7 +2468,7 @@ dependencies = [
 [[package]]
 name = "scirust-simd"
 version = "0.1.0"
-source = "git+https://github.com/CHECKUPAUTO/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
+source = "git+https://github.com/Memorithm/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
 dependencies = [
  "libc",
  "scirust-simd-macros",
@@ -2477,7 +2477,7 @@ dependencies = [
 [[package]]
 name = "scirust-simd-macros"
 version = "0.1.0"
-source = "git+https://github.com/CHECKUPAUTO/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
+source = "git+https://github.com/Memorithm/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2487,7 +2487,7 @@ dependencies = [
 [[package]]
 name = "scirust-symbolic"
 version = "0.1.0"
-source = "git+https://github.com/CHECKUPAUTO/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
+source = "git+https://github.com/Memorithm/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
 dependencies = [
  "ndarray",
  "serde",
@@ -2496,7 +2496,7 @@ dependencies = [
 [[package]]
 name = "scirust-symreg"
 version = "0.1.0"
-source = "git+https://github.com/CHECKUPAUTO/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
+source = "git+https://github.com/Memorithm/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
 dependencies = [
  "scirust-symbolic",
 ]

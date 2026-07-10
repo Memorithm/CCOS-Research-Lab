@@ -2,8 +2,8 @@
 name = "octacore"
 version = "0.1.0"
 edition = "2024"
-license = "LicenseRef-CheckupAuto-Dual"
-description = "Intelligent assembly of the CHECKUPAUTO memory triad (CCOS causal + OctaSoma semantic + SLHAv2 attention) into one cascade."
+license = "LicenseRef-TarekZekriti-Dual"
+description = "Intelligent assembly of the Memorithm memory triad (CCOS causal + OctaSoma semantic + SLHAv2 attention) into one cascade."
 repository = "https://github.com/Memorithm/CCOS_EXTENDED"
 
 # CCOS_EXTENDED: this crate is now a workspace member (vendored from

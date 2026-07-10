@@ -3,7 +3,7 @@ name = "slha-python"
 version = "0.2.0"
 edition = "2021"
 rust-version = "1.89"
-authors = ["Forge CHECKUPAUTO <forge@checkupauto.io>"]
+authors = ["Tarek Zekriti <zekrititarek@gmail.com>"]
 description = "Python bindings for SLHA v2 kernel."
 license = "PolyForm-Noncommercial-1.0.0"
 

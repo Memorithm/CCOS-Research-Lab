@@ -446,7 +446,7 @@ l'élargit dans trois directions :
 
 Le projet confirme son positionnement de **recherche en alignment / AI safety
 formalisée en code**, avec une maturité opérationnelle en progression nette.
-La double licence et l'orientation « contact@checkupauto.fr » suggèrent
+La double licence et l'orientation « zekrititarek@gmail.com » suggèrent
 toujours un positionnement à la fois académique et commercial discret.
 
 ---

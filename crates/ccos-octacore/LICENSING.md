@@ -16,7 +16,7 @@ Any commercial use — use by or for a business with an anticipated commercial
 application, including use in or as part of a product or service offered for a fee —
 requires a separate commercial license.
 
-To obtain a commercial license, contact: contact@checkupauto.fr
+To obtain a commercial license, contact: zekrititarek@gmail.com
 
 ## 3. Copyright
 

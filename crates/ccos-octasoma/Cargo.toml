@@ -3,9 +3,9 @@ name = "octasoma"
 version = "0.4.0"
 edition = "2024"
 description = "3D fractal semantic memory engine: learned PCA/JL projection, bucket PR-octree, exact 3-D k-NN, and LZ4-compressed persistence — 100% safe, stable Rust"
-license = "LicenseRef-CheckupAuto-Dual"
+license = "LicenseRef-TarekZekriti-Dual"
 readme = "README.md"
-repository = "https://github.com/checkupauto/octasoma"
+repository = "https://github.com/Memorithm/octasoma"
 keywords = ["octree", "semantic-memory", "knn", "pca", "embeddings"]
 categories = ["data-structures", "science", "algorithms"]
 
@@ -21,7 +21,7 @@ serde_json = { version = "1", optional = true }
 # Optional: runtime-dispatched SIMD kernels (AVX2/SSE2/NEON with a scalar
 # fallback) from the org's SciRust framework, pinned to a reviewed rev. Pulled in
 # only by the `simd` feature below; the default build keeps zero SciRust deps.
-scirust-simd = { git = "https://github.com/CHECKUPAUTO/scirust", rev = "edc94457773c4a83bd119ba362a50d6a189cfe69", optional = true }
+scirust-simd = { git = "https://github.com/Memorithm/scirust", rev = "edc94457773c4a83bd119ba362a50d6a189cfe69", optional = true }
 # Optional: the `gpu` feature only (proposal A5) — batched Q·Eᵀ scoring as one
 # WGSL GEMM. The kernel is vendored from scirust-gpu (its `wgpu` cargo feature
 # would drag scirust-core); tolerance-validated against the CPU path, never the
@@ -57,10 +57,10 @@ gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 # **dev-dependency only** (the accepted policy): the library build stays at one
 # dependency; rand/rayon/tracing enter only when building examples/tests.
 # Pinned to the same reviewed scirust rev as the optional `simd` runtime dep.
-scirust-evo = { git = "https://github.com/CHECKUPAUTO/scirust", rev = "edc94457773c4a83bd119ba362a50d6a189cfe69" }
+scirust-evo = { git = "https://github.com/Memorithm/scirust", rev = "edc94457773c4a83bd119ba362a50d6a189cfe69" }
 # Symbolic regression for the offline recall-law example (proposal C4) — same
 # dev-only policy and the same pinned rev; pulls only scirust-symbolic.
-scirust-symreg = { git = "https://github.com/CHECKUPAUTO/scirust", rev = "edc94457773c4a83bd119ba362a50d6a189cfe69" }
+scirust-symreg = { git = "https://github.com/Memorithm/scirust", rev = "edc94457773c4a83bd119ba362a50d6a189cfe69" }
 
 [[bin]]
 name = "octasoma-mcp"

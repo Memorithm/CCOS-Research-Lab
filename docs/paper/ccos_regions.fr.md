@@ -848,4 +848,4 @@ GitHub Issues? *ICLR*, 2024. arXiv:2310.06770.
 
 [^1]: Causal Context Operating System (CCOS), un prototype de recherche
     ouvert. Le code source, les scripts de reproduction et cet article :
-    <https://github.com/CHECKUPAUTO/CCOS>.
+    <https://github.com/Memorithm/CCOS>.
