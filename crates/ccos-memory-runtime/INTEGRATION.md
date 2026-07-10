@@ -106,7 +106,7 @@ codebook. This variant is verified: `cargo test --features scirust-kernel` → 5
 1. `Cargo.toml` — add the optional dep + feature:
    ```toml
    [dependencies]
-   scirust = { git = "https://github.com/CHECKUPAUTO/SLHAv2", optional = true }
+   scirust = { git = "https://github.com/Memorithm/SLHAv2", optional = true }
 
    [features]
    default = []

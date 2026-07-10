@@ -22,7 +22,7 @@ pub struct RecallItem { pub uri: String, pub score: f64, pub kind: String, pub c
 **1. Dependency** — `Cargo.toml`:
 
 ```toml
-octasoma = { git = "https://github.com/checkupauto/octasoma" }
+octasoma = { git = "https://github.com/Memorithm/octasoma" }
 ```
 
 **2. Vendor the index** — copy `octa_index.rs` to `src/octa_index.rs` and

@@ -9,7 +9,7 @@ fusion delivers on both axes, honestly.
 
 ## Why distill (the dep-vs-link decision)
 
-SciRust (`CHECKUPAUTO/scirust`, a ~50-crate workspace) is, by its own description, a *"pure-Rust
+SciRust (`Memorithm/scirust`, a ~50-crate workspace) is, by its own description, a *"pure-Rust
 **deterministic** deep-learning & scientific-computing platform"*. Its relevant pieces:
 
 - `scirust-core/src/tn/ops/svd.rs` — a truncated SVD that is **a thin wrapper over `nalgebra::SVD`**

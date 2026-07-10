@@ -8,10 +8,10 @@ description = "Recursive Self-Improvement — implémentation Rust du système g
 # SPDX « A OR B » reflète le choix laissé à l'utilisateur (LicenseRef pour la
 # licence commerciale, hors liste SPDX standard).
 license = "PolyForm-Noncommercial-1.0.0 OR LicenseRef-Commercial"
-authors = ["Tarek Zekriti / CHECKUPAUTO"]
-repository = "https://github.com/CHECKUPAUTO/RSI"
-homepage = "https://github.com/CHECKUPAUTO/RSI"
-documentation = "https://github.com/CHECKUPAUTO/RSI/tree/main/docs"
+authors = ["Tarek Zekriti / Memorithm"]
+repository = "https://github.com/Memorithm/RSI"
+homepage = "https://github.com/Memorithm/RSI"
+documentation = "https://github.com/Memorithm/RSI/tree/main/docs"
 readme = "README.md"
 keywords = ["rsi", "self-improvement", "optimization", "agent", "llm"]
 categories = ["science", "simulation"]
@@ -36,7 +36,7 @@ octasoma = ["dep:octasoma"]
 # inversion). The CCOS audit bridge (`CcosAudit`, rsi's `AuditLog` over CCOS's
 # hash-chained `EventLog`) now lives on the CCOS side in `src/rsi_bridge.rs`,
 # behind the ROOT `ccos` crate's `rsi` feature. This crate has no edge on `ccos`.
-# Moteur d'ascension réel `scirust-rsi` (dépendance git CHECKUPAUTO/scirust).
+# Moteur d'ascension réel `scirust-rsi` (dépendance git Memorithm/scirust).
 # Voir SCIRUST_ACTIVATION.md. Activer avec : --features scirust.
 scirust = ["dep:scirust-rsi", "dep:rand"]
 # Backend LLM local Ollama (client HTTP minimal sur std::net, sans dépendance).
@@ -64,14 +64,14 @@ observability = ["dep:tracing"]
 simd = ["dep:wide"]
 
 [dependencies]
-forge-core = { git = "https://github.com/CHECKUPAUTO/forge", optional = true }
+forge-core = { git = "https://github.com/Memorithm/forge", optional = true }
 # CCOS_EXTENDED: repointed from the git dep to the vendored workspace member
 # (`crates/ccos-octasoma`) — air-gap: no network fetch. Same package name `octasoma`,
 # same v0.4.0, so the `octasoma` feature's API is unchanged.
 octasoma = { path = "../ccos-octasoma", optional = true }
 rand = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
-scirust-rsi = { git = "https://github.com/CHECKUPAUTO/scirust", optional = true }
+scirust-rsi = { git = "https://github.com/Memorithm/scirust", optional = true }
 ureq = { version = "2", optional = true }
 wasmi = { version = "0.31", optional = true }
 wat = { version = "1", optional = true }

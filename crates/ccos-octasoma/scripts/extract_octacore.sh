@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Materialise the staged `octacore/` crate into a standalone crate directory, ready
-# to push to https://github.com/CHECKUPAUTO/octacore.
+# to push to https://github.com/Memorithm/octacore.
 #
 #   scripts/extract_octacore.sh <DEST_DIR>
 #
@@ -17,8 +17,8 @@ dest="${1:?usage: scripts/extract_octacore.sh <DEST_DIR>}"
 # verified against: SketchIndex, calibrate_global_shortlist, RelevanceFeedback).
 # Bump when octacore needs a newer API.
 tag="v0.4.0"
-octasoma_url="https://github.com/CHECKUPAUTO/octasoma"
-octacore_url="https://github.com/CHECKUPAUTO/octacore"
+octasoma_url="https://github.com/Memorithm/octasoma"
+octacore_url="https://github.com/Memorithm/octacore"
 
 [ -d "$src" ] || { echo "no octacore/ crate at $src" >&2; exit 1; }
 mkdir -p "$dest"

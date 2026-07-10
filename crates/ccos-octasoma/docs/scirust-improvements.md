@@ -1,7 +1,7 @@
 # SciRust-based improvements & the CCOS premium-extension case
 
 This document proposes concrete improvements to OctaSoma built from components of
-[SciRust](https://github.com/CHECKUPAUTO/scirust) (the org's pure-Rust deterministic
+[SciRust](https://github.com/Memorithm/scirust) (the org's pure-Rust deterministic
 deep-learning / scientific-computing framework), and assesses packaging the result as a
 **premium extension for CCOS**. Every proposal below was checked against both codebases
 (cited paths are real types/functions, not aspirations); each one names the exact SciRust

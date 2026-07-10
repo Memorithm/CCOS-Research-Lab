@@ -1,6 +1,6 @@
 # OctaSoma — a fractal, zoomable, explainable memory for AI agents
 
-[![CI](https://github.com/checkupauto/octasoma/actions/workflows/ci.yml/badge.svg)](https://github.com/checkupauto/octasoma/actions/workflows/ci.yml)
+[![CI](https://github.com/Memorithm/octasoma/actions/workflows/ci.yml/badge.svg)](https://github.com/Memorithm/octasoma/actions/workflows/ci.yml)
 [![rust](https://img.shields.io/badge/rust-stable%2C%20edition%202024-orange)](#)
 [![unsafe](https://img.shields.io/badge/unsafe-forbidden-success)](#)
 [![license](https://img.shields.io/badge/license-PolyForm--NC--1.0.0-blue)](LICENSE.md)
@@ -72,7 +72,7 @@ project (and of the accompanying [paper](paper/)).
 ### Command-line tool (simplest — no code)
 
 ```bash
-git clone https://github.com/checkupauto/octasoma && cd octasoma
+git clone https://github.com/Memorithm/octasoma && cd octasoma
 ./install.sh                 # builds, tests, installs the `octasoma` CLI
 ```
 
@@ -94,13 +94,13 @@ no model needed). Run `octasoma help` for all options.
 ```bash
 cargo add octasoma
 # or in Cargo.toml:
-#   octasoma = { git = "https://github.com/checkupauto/octasoma" }
+#   octasoma = { git = "https://github.com/Memorithm/octasoma" }
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/checkupauto/octasoma && cd octasoma
+git clone https://github.com/Memorithm/octasoma && cd octasoma
 make build      # cargo build --release
 make test       # 60+ tests (make stress for the 1M-insert soak)
 make demo       # offline agent demo
@@ -246,7 +246,7 @@ inspect and *see*, not just query.
 ## MCP server (ecosystem connector)
 
 Expose OctaSoma as semantic memory over **MCP** (stdio JSON-RPC) — a connector for
-agents and the wider CHECKUPAUTO stack (CCOS, SLHAv2):
+agents and the wider Memorithm stack (CCOS, SLHAv2):
 
 ```bash
 cargo build --release --features mcp     # optional feature; adds serde_json
@@ -407,7 +407,7 @@ See [`docs/evaluation.md`](docs/evaluation.md) for the honest, detailed version.
 OctaSoma is **dual-licensed**:
 
 - **Noncommercial & personal use** — free under the [PolyForm Noncommercial License 1.0.0](LICENSE.md) (research, study, hobby, education, public-interest organisations).
-- **Commercial use** — requires a separate commercial license; contact contact@checkupauto.fr.
+- **Commercial use** — requires a separate commercial license; contact zekrititarek@gmail.com.
 
 See [`LICENSING.md`](LICENSING.md) for the full terms.
 

@@ -842,4 +842,4 @@ al. SWE-bench: Can Language Models Resolve Real-World GitHub Issues?
 
 [^1]: Causal Context Operating System (CCOS), un prototipo de
     investigación abierto. Código fuente, guiones de reproducción y este
-    artículo: <https://github.com/CHECKUPAUTO/CCOS>.
+    artículo: <https://github.com/Memorithm/CCOS>.

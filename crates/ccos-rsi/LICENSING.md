@@ -17,16 +17,16 @@ Tout **usage commercial** (intégration dans un produit ou service payant, usage
 en production à but lucratif, etc.) nécessite une **licence commerciale
 séparée**.
 
-📧 Contact : **contact@checkupauto.fr**
+📧 Contact : **zekrititarek@gmail.com**
 
 ## Résumé
 
 | Profil | Licence | Coût |
 |--------|---------|------|
 | Particuliers, chercheurs, éducation, gouvernement | PolyForm Noncommercial 1.0.0 | Gratuit |
-| Usage commercial | Licence commerciale (sur demande) | contact@checkupauto.fr |
+| Usage commercial | Licence commerciale (sur demande) | zekrititarek@gmail.com |
 
 ---
 
-*Copyright 2026 Tarek Zekriti / CHECKUPAUTO. Voir [LICENSE.md](LICENSE.md) pour
+*Copyright 2026 Tarek Zekriti / Memorithm. Voir [LICENSE.md](LICENSE.md) pour
 le texte complet de la licence non commerciale.*

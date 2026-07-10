@@ -888,7 +888,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 [[package]]
 name = "scirust-evo"
 version = "0.1.0"
-source = "git+https://github.com/CHECKUPAUTO/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
+source = "git+https://github.com/Memorithm/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
 dependencies = [
  "rand",
  "rand_distr",
@@ -900,7 +900,7 @@ dependencies = [
 [[package]]
 name = "scirust-simd"
 version = "0.1.0"
-source = "git+https://github.com/CHECKUPAUTO/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
+source = "git+https://github.com/Memorithm/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
 dependencies = [
  "libc",
  "scirust-simd-macros",
@@ -909,7 +909,7 @@ dependencies = [
 [[package]]
 name = "scirust-simd-macros"
 version = "0.1.0"
-source = "git+https://github.com/CHECKUPAUTO/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
+source = "git+https://github.com/Memorithm/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -919,7 +919,7 @@ dependencies = [
 [[package]]
 name = "scirust-symbolic"
 version = "0.1.0"
-source = "git+https://github.com/CHECKUPAUTO/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
+source = "git+https://github.com/Memorithm/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
 dependencies = [
  "ndarray",
  "serde",
@@ -928,7 +928,7 @@ dependencies = [
 [[package]]
 name = "scirust-symreg"
 version = "0.1.0"
-source = "git+https://github.com/CHECKUPAUTO/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
+source = "git+https://github.com/Memorithm/scirust?rev=edc94457773c4a83bd119ba362a50d6a189cfe69#edc94457773c4a83bd119ba362a50d6a189cfe69"
 dependencies = [
  "scirust-symbolic",
 ]

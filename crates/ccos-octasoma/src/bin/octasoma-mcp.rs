@@ -1,5 +1,5 @@
 //! `octasoma-mcp` — a stdio JSON-RPC (MCP) server exposing OctaSoma as **semantic
-//! memory** for agents and the CHECKUPAUTO stack (CCOS / SLHAv2).
+//! memory** for agents and the Memorithm stack (CCOS / SLHAv2).
 //!
 //! Build & run (requires the `mcp` feature):
 //! ```text

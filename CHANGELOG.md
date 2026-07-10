@@ -157,7 +157,7 @@ fused product.
 
 - **External dense-retrieval backend (`scirust-retrieval` feature).** Removed the optional bridge to the
   external `scirust-retrieval` crate (`src/scirust_bridge.rs`) and its `scirust-dense` eval strategy. CI
-  could no longer authenticate to the private `CHECKUPAUTO/scirust` repo (the pinned revision became
+  could no longer authenticate to the private `Memorithm/scirust` repo (the pinned revision became
   unreachable), which failed `cargo clippy --all-features --locked` at **dependency resolution** on every
   PR — before any code compiled. As the dependency was optional and off by default, removing it (dep,
   feature, `scirust_bridge` module, `scirust-dense` eval arm, the dedicated CI step, and the lock entries)

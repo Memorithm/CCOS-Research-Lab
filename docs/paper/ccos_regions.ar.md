@@ -712,4 +712,4 @@ GitHub Issues? *ICLR*, 2024. arXiv:2310.06770.
 
 [^1]: Causal Context Operating System (CCOS)، نموذج بحثي أوّلي مفتوح.
     الشيفرة المصدرية وبرامج إعادة الإنتاج وهذه الورقة:
-    <https://github.com/CHECKUPAUTO/CCOS>.
+    <https://github.com/Memorithm/CCOS>.

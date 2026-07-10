@@ -2,7 +2,7 @@
 
 A single Rust product at `/root/CCOS_EXTENDED` fusing **CCOS** (hub) + **CERVO/RSI** + **SLHAv2** + **OctaSoma**, behind a **DUAL determinism posture** and a **Pro-by-default commercial license**.
 
-> Source repos (all same org Memorithm/CHECKUPAUTO, all dual-licensed PolyForm-Noncommercial/commercial — mutually compatible):
+> Source repos (all same org Memorithm/Memorithm, all dual-licensed PolyForm-Noncommercial/commercial — mutually compatible):
 > CCOS `/root/CCOS` v0.3.0 · CERVO/RSI `/root/CERVO/RSI` v0.10.0 · SLHAv2 `/root/SLHAv2` v0.2.0 · OctaSoma `/root/octasoma` v0.4.0
 
 ## Guiding invariants (non-negotiable)
@@ -42,7 +42,7 @@ A single Rust product at `/root/CCOS_EXTENDED` fusing **CCOS** (hub) + **CERVO/R
 - **Octacore circular dep**: same pattern — drop octacore's `ccos` git dep + `ccos_adapter` module; move `CcosScope<M: ExternalMemory>` to `src/substrate/mod.rs` on CCOS side.
 - **OctaSoma git→path**: `octasoma = { path = "crates/ccos-octasoma", optional = true }` (single v0.4.0 pin).
 - **Crate name collision**: SLHAv2's `scirust` → package name `ccos-scirust`, `[lib] name = "scirust"` (imports unchanged). RSI's `scirust-rsi` feature DROPPED. OctaSoma's `scirust-simd/evo` stay optional git (off by default).
-- **License**: every member `license = "LicenseRef-CheckupAuto-Dual"`. Drop the no-license `cervo` scaffold.
+- **License**: every member `license = "LicenseRef-TarekZekriti-Dual"`. Drop the no-license `cervo` scaffold.
 - **Edition**: `ccos` stays 2021 (`octa_index.rs:1-12` let-chain note); `ccos-octasoma` stays 2024; workspace mixes editions freely.
 
 ## B. Feature gate architecture (DUAL)
