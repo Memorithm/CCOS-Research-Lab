@@ -1,0 +1,37 @@
+{
+  "schema": "ccos.benchmark/v1",
+  "commit": "d75ded8d99174ed3557f8bff5beddb850779fb02",
+  "dataset": "synthetic-edit-cycle-v1",
+  "dataset_version": "repository@d75ded8d99174ed3557f8bff5beddb850779fb02",
+  "seed": "deterministic-cycle-index",
+  "configuration": {
+    "cycles": 2000,
+    "paging_cap": 200,
+    "files": 8,
+    "sample_every": 10000
+  },
+  "result": {
+    "version": "0.4.0",
+    "cycles": 2000,
+    "total_seconds": 1.6269404870000002,
+    "avg_cycle_us": 813.4702435,
+    "cycles_per_second": 1229.3012657690408,
+    "final_nodes": 200,
+    "final_edges": 32,
+    "final_events": 2000,
+    "peak_nodes": 200,
+    "peak_edges": 40,
+    "node_drift": 0,
+    "dangling_edges": 0,
+    "paging_cap": 200,
+    "samples": [
+      {
+        "cycle": 0,
+        "nodes": 6,
+        "edges": 5,
+        "events": 1,
+        "avg_cycle_us": 0.0
+      }
+    ]
+  }
+}

@@ -1,0 +1,76 @@
+name: Periodic Security Validation
+
+on:
+  schedule:
+    - cron: "30 4 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  miri:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: rustup toolchain install nightly --profile minimal --component miri,rust-src
+      - run: cargo +nightly miri setup
+      - run: cargo +nightly miri test -p ccos-memory-runtime
+      - run: cargo +nightly miri test -p rsi --lib
+      - run: cargo +nightly miri test -p octasoma --lib
+
+  address-sanitizer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: rustup toolchain install nightly --profile minimal --component rust-src
+      - run: rustup target add x86_64-unknown-linux-gnu --toolchain nightly
+      - name: ASan native and C ABI
+        env:
+          RUSTFLAGS: -Zsanitizer=address
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+        run: cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu -p slha-c -p scirust --locked
+
+  undefined-sanitizer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: rustup toolchain install nightly --profile minimal --component rust-src
+      - run: rustup target add x86_64-unknown-linux-gnu --toolchain nightly
+      - name: UBSan C ABI
+        env:
+          RUSTFLAGS: -Zsanitizer=undefined
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu -p slha-c --locked
+
+  thread-sanitizer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: rustup toolchain install nightly --profile minimal --component rust-src
+      - run: rustup target add x86_64-unknown-linux-gnu --toolchain nightly
+      - name: TSan concurrency smoke
+        env:
+          RUSTFLAGS: -Zsanitizer=thread
+          TSAN_OPTIONS: halt_on_error=1
+        run: cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu -p rsi --lib --locked
+
+  fuzz-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: rustup toolchain install nightly --profile minimal
+      - run: cargo +nightly install cargo-fuzz --version 0.13.2 --locked
+      - name: Bounded parser fuzzing
+        run: |
+          for target in license_token base64url revocation_list mcp_json snapshot_oplog cold_blob migration_bundle codec_decode ffi_lengths; do
+            cargo +nightly fuzz run "$target" -- -max_total_time=20 -rss_limit_mb=2048
+          done
