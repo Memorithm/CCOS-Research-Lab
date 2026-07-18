@@ -23,6 +23,36 @@
 
 use std::fmt;
 
+include!(concat!(env!("OUT_DIR"), "/license_build_keys.rs"));
+
+/// Current signed-license token format.
+pub const LICENSE_TOKEN_VERSION: u32 = 1;
+/// Hard input bound applied before UTF-8, base64, JSON, or signature parsing.
+pub const MAX_LICENSE_TOKEN_BYTES: usize = 64 * 1024;
+const MAX_LICENSE_PAYLOAD_BYTES: usize = 8 * 1024;
+/// Hard limit for a signed offline revocation list.
+pub const MAX_REVOCATION_LIST_BYTES: usize = 1024 * 1024;
+/// Current signed revocation-list payload version.
+pub const REVOCATION_LIST_VERSION: u32 = 1;
+const MAX_REVOCATION_ENTRIES: usize = 10_000;
+const ED25519_ALGORITHM: &str = "ed25519";
+const SLH_DSA_ALGORITHM: &str = "slh-dsa-shake-128s";
+
+/// Build-time public-key provenance. This is deliberately public metadata: a
+/// verification key is not secret, but its origin must be unambiguous.
+pub fn license_build_profile() -> &'static str {
+    LICENSE_BUILD_PROFILE
+}
+
+/// Key identifiers embedded by `CCOS_LICENSE_PUBLIC_KEYS_FILE` at build time.
+pub fn embedded_license_key_ids() -> Vec<&'static str> {
+    EMBEDDED_ED25519_KEYS
+        .iter()
+        .chain(EMBEDDED_SLH_DSA_KEYS.iter())
+        .map(|(kid, _)| *kid)
+        .collect()
+}
+
 /// A licensed (*Pro*) capability. The **core** of CCOS is never one of these — only advanced,
 /// operator-facing tooling is gated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,13 +246,14 @@ impl LicenseVerifier for CommunityVerifier {
 ///
 /// Regenerate with `cargo run --features license --example license_sign keygen`.
 #[cfg(feature = "license")]
-pub const LICENSE_PUBLIC_KEY: [u8; 32] = [0u8; 32];
+pub const LICENSE_PUBLIC_KEY: [u8; 32] = EMBEDDED_ED25519_PRIMARY;
 
 /// The signed-token payload: who, and until when. Compact-JSON + base64url is the token's first
 /// segment. Shared by every compiled-in verifier (ed25519 behind `license`, SLH-DSA behind
 /// `license-pq`), so it lives behind the union of those features.
 #[cfg(any(feature = "license", feature = "license-pq"))]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TokenPayload {
     /// Licensee (organisation / deployment name) — surfaced in the audit log.
     licensee: String,
@@ -233,6 +264,133 @@ struct TokenPayload {
     /// floating license — older tokens deserialize unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     machine: Option<String>,
+}
+
+/// Versioned payload used by production keyrings. Legacy payloads remain
+/// available only through explicit test/development verifiers.
+#[cfg(any(feature = "license", feature = "license-pq"))]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TokenPayloadV1 {
+    version: u32,
+    license_id: String,
+    licensee: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    exp: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    machine: Option<String>,
+}
+
+/// A reason code in a vendor-signed, offline revocation list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RevocationReason {
+    Compromised,
+    Superseded,
+    Refunded,
+    PolicyViolation,
+    Administrative,
+}
+
+/// One signed revocation. At least one of `license_id` and
+/// `token_sha256` must be present; the verifier rejects ambiguous duplicates.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevocationEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_sha256: Option<String>,
+    pub revoked_at: u64,
+    pub reason: RevocationReason,
+}
+
+/// Canonical JSON payload carried by a signed `ccosrev1` envelope.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevocationList {
+    pub version: u32,
+    pub key_id: String,
+    pub generated_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
+    pub entries: Vec<RevocationEntry>,
+}
+
+impl RevocationList {
+    fn validate(&self, envelope_kid: &str, now: u64) -> Result<(), LicenseError> {
+        if self.version != REVOCATION_LIST_VERSION {
+            return Err(LicenseError::Invalid(format!(
+                "unsupported revocation-list version: {}",
+                self.version
+            )));
+        }
+        validate_token_identity(&self.key_id, "revocation-list", "revocation-list")?;
+        if self.key_id != envelope_kid {
+            return Err(LicenseError::Invalid(
+                "revocation-list key id does not match signed envelope".into(),
+            ));
+        }
+        if self.entries.len() > MAX_REVOCATION_ENTRIES {
+            return Err(LicenseError::Invalid(
+                "revocation list exceeds 10,000 entries".into(),
+            ));
+        }
+        if self.generated_at > now {
+            return Err(LicenseError::Invalid(
+                "revocation list was generated in the future".into(),
+            ));
+        }
+        if self.expires_at.is_some_and(|expiry| expiry < now) {
+            return Err(LicenseError::Invalid("revocation list has expired".into()));
+        }
+        let mut identities = std::collections::BTreeSet::new();
+        for entry in &self.entries {
+            if entry.license_id.is_none() && entry.token_sha256.is_none() {
+                return Err(LicenseError::Invalid(
+                    "revocation entry has no license id or token digest".into(),
+                ));
+            }
+            if entry.revoked_at > now {
+                return Err(LicenseError::Invalid(
+                    "revocation entry timestamp is in the future".into(),
+                ));
+            }
+            if let Some(id) = &entry.license_id {
+                validate_token_identity(envelope_kid, id, "revocation")?;
+                if !identities.insert(format!("id:{id}")) {
+                    return Err(LicenseError::Invalid(
+                        "duplicate license id in revocation list".into(),
+                    ));
+                }
+            }
+            if let Some(digest) = &entry.token_sha256 {
+                if digest.len() != 64
+                    || !digest
+                        .bytes()
+                        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+                {
+                    return Err(LicenseError::Invalid(
+                        "revocation token digest is not lowercase SHA-256".into(),
+                    ));
+                }
+                if !identities.insert(format!("sha256:{digest}")) {
+                    return Err(LicenseError::Invalid(
+                        "duplicate token digest in revocation list".into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn revokes(&self, blob: &[u8], license_id: Option<&str>) -> bool {
+        let digest = token_sha256(blob);
+        self.entries.iter().any(|entry| {
+            entry.token_sha256.as_deref() == Some(digest.as_str())
+                || license_id.is_some_and(|id| entry.license_id.as_deref() == Some(id))
+        })
+    }
 }
 
 /// URL-safe base64 **without padding** (RFC 4648 §5: `-`/`_`, no `=`). Hand-rolled so neither license
@@ -277,6 +435,14 @@ pub(crate) fn b64url_decode(s: &str) -> Option<Vec<u8>> {
     for chunk in s.chunks(4) {
         if chunk.len() < 2 {
             return None; // a lone trailing char encodes no full byte
+        }
+        // Unpadded base64url still has canonical zero pad bits. Accepting
+        // non-zero unused bits would give one signed byte string multiple text
+        // representations and make token-digest revocation ambiguous.
+        if (chunk.len() == 2 && val(chunk[1])? & 0x0f != 0)
+            || (chunk.len() == 3 && val(chunk[2])? & 0x03 != 0)
+        {
+            return None;
         }
         let mut n = 0u32;
         for (i, &c) in chunk.iter().enumerate() {
@@ -327,13 +493,126 @@ pub fn sign_token_bound(
     format!("{signing_input}.{}", b64url_encode(&sig.to_bytes()))
 }
 
+/// Sign a production-format Ed25519 token with explicit format version,
+/// algorithm and key identifier. The private seed is accepted only by this
+/// vendor-side API and is never embedded by the build-key mechanism.
+#[cfg(feature = "license")]
+pub fn sign_token_v1(
+    signing_seed: &[u8; 32],
+    kid: &str,
+    license_id: &str,
+    licensee: &str,
+    exp: Option<u64>,
+    machine: Option<&str>,
+) -> Result<String, LicenseError> {
+    use ed25519_dalek::{Signer, SigningKey};
+    validate_token_identity(kid, license_id, licensee)?;
+    let payload = TokenPayloadV1 {
+        version: LICENSE_TOKEN_VERSION,
+        license_id: license_id.to_string(),
+        licensee: licensee.to_string(),
+        exp,
+        machine: machine.map(str::to_string),
+    };
+    let json = serde_json::to_vec(&payload)
+        .map_err(|e| LicenseError::Invalid(format!("payload JSON: {e}")))?;
+    let payload_b64 = b64url_encode(&json);
+    let signing_input = format!("ccoslic1.{ED25519_ALGORITHM}.{kid}.{payload_b64}");
+    let sig = SigningKey::from_bytes(signing_seed).sign(signing_input.as_bytes());
+    Ok(format!(
+        "{signing_input}.{}",
+        b64url_encode(&sig.to_bytes())
+    ))
+}
+
+/// Sign an offline revocation list with an Ed25519 vendor key. Private key
+/// material is accepted only by this issuer-side API and is never read by the
+/// application build script.
+#[cfg(feature = "license")]
+pub fn sign_revocation_list_ed25519(
+    signing_seed: &[u8; 32],
+    list: &RevocationList,
+) -> Result<String, LicenseError> {
+    use ed25519_dalek::{Signer, SigningKey};
+    list.validate(&list.key_id, list.generated_at)?;
+    let json = serde_json::to_vec(list)
+        .map_err(|e| LicenseError::Invalid(format!("revocation-list JSON: {e}")))?;
+    if json.len() > MAX_REVOCATION_LIST_BYTES {
+        return Err(LicenseError::Invalid("revocation list is oversized".into()));
+    }
+    let payload = b64url_encode(&json);
+    let input = format!("ccosrev1.{ED25519_ALGORITHM}.{}.{payload}", list.key_id);
+    let signature = SigningKey::from_bytes(signing_seed).sign(input.as_bytes());
+    Ok(format!("{input}.{}", b64url_encode(&signature.to_bytes())))
+}
+
+#[cfg(any(feature = "license", feature = "license-pq"))]
+fn validate_token_identity(
+    kid: &str,
+    license_id: &str,
+    licensee: &str,
+) -> Result<(), LicenseError> {
+    let valid_id = |value: &str, max: usize| {
+        !value.is_empty()
+            && value.len() <= max
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    };
+    if !valid_id(kid, 64) {
+        return Err(LicenseError::Invalid("invalid key id".into()));
+    }
+    if !valid_id(license_id, 128) {
+        return Err(LicenseError::Invalid("invalid license id".into()));
+    }
+    if licensee.trim().is_empty() || licensee.len() > 512 {
+        return Err(LicenseError::Invalid("invalid licensee".into()));
+    }
+    Ok(())
+}
+
+fn token_sha256(blob: &[u8]) -> String {
+    use sha2::Digest;
+    let canonical = std::str::from_utf8(blob)
+        .map(str::trim)
+        .map(str::as_bytes)
+        .unwrap_or(blob);
+    let digest = sha2::Sha256::digest(canonical);
+    let mut out = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+fn token_license_id(blob: &[u8]) -> Option<String> {
+    let token = std::str::from_utf8(blob).ok()?.trim();
+    let mut parts = token.split('.');
+    if parts.next()? != "ccoslic1" {
+        return None;
+    }
+    let _algorithm = parts.next()?;
+    let _kid = parts.next()?;
+    let payload = parts.next()?;
+    let _signature = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let json = b64url_decode(payload)?;
+    serde_json::from_slice::<TokenPayloadV1>(&json)
+        .ok()
+        .map(|payload| payload.license_id)
+}
+
 /// The offline **ed25519 license verifier**: a pure signature + format check against a public key
 /// (the baked-in [`LICENSE_PUBLIC_KEY`] by default). No I/O, no clock, no network — the zero-knowledge
 /// contract that lets a customer run air-gapped. An unset / invalid embedded key licenses nothing.
 #[cfg(feature = "license")]
 #[derive(Clone)]
 pub struct Ed25519Verifier {
-    key: Option<ed25519_dalek::VerifyingKey>,
+    keys: Vec<(String, ed25519_dalek::VerifyingKey)>,
+    allow_legacy: bool,
 }
 
 #[cfg(feature = "license")]
@@ -350,18 +629,68 @@ impl Ed25519Verifier {
     /// **fail-closed**: a deployment must paste its own public key (via the `license_sign keygen` tool)
     /// before any token can unlock Pro.
     pub fn new() -> Self {
-        if LICENSE_PUBLIC_KEY == [0u8; 32] {
-            return Self { key: None };
+        let keys = EMBEDDED_ED25519_KEYS
+            .iter()
+            .filter_map(|(kid, bytes)| {
+                ed25519_dalek::VerifyingKey::from_bytes(bytes)
+                    .ok()
+                    .map(|key| ((*kid).to_string(), key))
+            })
+            .collect();
+        Self {
+            keys,
+            allow_legacy: false,
         }
-        Self::with_public_key(&LICENSE_PUBLIC_KEY)
     }
 
     /// Verifier bound to an explicit public key — the tests sign with a throwaway keypair and verify
     /// against its public half, never the embedded vendor key.
     pub fn with_public_key(public_key: &[u8; 32]) -> Self {
         Self {
-            key: ed25519_dalek::VerifyingKey::from_bytes(public_key).ok(),
+            keys: ed25519_dalek::VerifyingKey::from_bytes(public_key)
+                .ok()
+                .map(|key| vec![("legacy-test".to_string(), key)])
+                .unwrap_or_default(),
+            allow_legacy: true,
         }
+    }
+
+    /// Construct a bounded versioned-token keyring. Legacy unversioned tokens
+    /// are rejected by this constructor.
+    pub fn with_keyring(keys: &[(&str, [u8; 32])]) -> Result<Self, LicenseError> {
+        if keys.is_empty() || keys.len() > 8 {
+            return Err(LicenseError::Invalid(
+                "ed25519 keyring must contain 1..=8 keys".into(),
+            ));
+        }
+        let mut parsed = Vec::with_capacity(keys.len());
+        for (kid, bytes) in keys {
+            validate_token_identity(kid, "keyring-validation", "keyring")?;
+            if *bytes == [0u8; 32] {
+                return Err(LicenseError::Invalid(format!(
+                    "malformed ed25519 key: {kid}"
+                )));
+            }
+            if parsed.iter().any(|(existing, _)| existing == kid) {
+                return Err(LicenseError::Invalid(format!(
+                    "duplicate ed25519 key id: {kid}"
+                )));
+            }
+            let key = ed25519_dalek::VerifyingKey::from_bytes(bytes)
+                .map_err(|_| LicenseError::Invalid(format!("malformed ed25519 key: {kid}")))?;
+            parsed.push(((*kid).to_string(), key));
+        }
+        Ok(Self {
+            keys: parsed,
+            allow_legacy: false,
+        })
+    }
+
+    fn key_for(&self, kid: &str) -> Option<&ed25519_dalek::VerifyingKey> {
+        self.keys
+            .iter()
+            .find(|(candidate, _)| candidate == kid)
+            .map(|(_, key)| key)
     }
 }
 
@@ -373,13 +702,25 @@ impl LicenseVerifier for Ed25519Verifier {
     /// (so the CLI can say *expired on X* while keeping the licensee for the audit log). `now` is thus
     /// unused; the check is pure signature + format.
     fn verify(&self, blob: &[u8], _now: u64) -> Result<License, LicenseError> {
-        let key = self
-            .key
-            .as_ref()
-            .ok_or_else(|| LicenseError::Invalid("no embedded public key".into()))?;
+        if blob.len() > MAX_LICENSE_TOKEN_BYTES {
+            return Err(LicenseError::Invalid("token exceeds 64 KiB limit".into()));
+        }
         let token = std::str::from_utf8(blob)
             .map_err(|_| LicenseError::Invalid("token is not UTF-8".into()))?
             .trim();
+        if token.starts_with("ccoslic1.") {
+            return self.verify_v1(token);
+        }
+        if !self.allow_legacy {
+            return Err(LicenseError::Invalid(
+                "legacy token format is disabled for embedded keyrings".into(),
+            ));
+        }
+        let key = self
+            .keys
+            .first()
+            .map(|(_, key)| key)
+            .ok_or_else(|| LicenseError::Invalid("no embedded public key".into()))?;
         let (signing_input, sig_b64) = token
             .split_once('.')
             .ok_or_else(|| LicenseError::Invalid("token is not payload.signature".into()))?;
@@ -400,6 +741,106 @@ impl LicenseVerifier for Ed25519Verifier {
             expires_at: payload.exp,
             machine: payload.machine,
         })
+    }
+}
+
+#[cfg(feature = "license")]
+impl Ed25519Verifier {
+    fn verify_v1(&self, token: &str) -> Result<License, LicenseError> {
+        let parts: Vec<&str> = token.split('.').collect();
+        let [prefix, algorithm, kid, payload_b64, sig_b64] = parts.as_slice() else {
+            return Err(LicenseError::Invalid(
+                "token is not ccoslic1.algorithm.kid.payload.signature".into(),
+            ));
+        };
+        if *prefix != "ccoslic1" {
+            return Err(LicenseError::Invalid("unknown token format".into()));
+        }
+        if *algorithm != ED25519_ALGORITHM {
+            return Err(LicenseError::Invalid(format!(
+                "unknown or cross-scheme algorithm: {algorithm}"
+            )));
+        }
+        let key = self
+            .key_for(kid)
+            .ok_or_else(|| LicenseError::Invalid(format!("unknown key id: {kid}")))?;
+        let sig_bytes = b64url_decode(sig_b64)
+            .filter(|bytes| bytes.len() == 64)
+            .ok_or_else(|| LicenseError::Invalid("signature is not 64 bytes".into()))?;
+        let sig_array: [u8; 64] = sig_bytes
+            .try_into()
+            .map_err(|_| LicenseError::Invalid("signature is not 64 bytes".into()))?;
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
+        let signing_input = format!("{prefix}.{algorithm}.{kid}.{payload_b64}");
+        use ed25519_dalek::Verifier;
+        key.verify(signing_input.as_bytes(), &signature)
+            .map_err(|_| LicenseError::Invalid("bad signature".into()))?;
+        let json = b64url_decode(payload_b64)
+            .filter(|bytes| bytes.len() <= MAX_LICENSE_PAYLOAD_BYTES)
+            .ok_or_else(|| LicenseError::Invalid("payload is invalid or oversized".into()))?;
+        let payload: TokenPayloadV1 = serde_json::from_slice(&json)
+            .map_err(|e| LicenseError::Invalid(format!("payload JSON: {e}")))?;
+        if payload.version != LICENSE_TOKEN_VERSION {
+            return Err(LicenseError::Invalid(format!(
+                "unsupported token version: {}",
+                payload.version
+            )));
+        }
+        validate_token_identity(kid, &payload.license_id, &payload.licensee)?;
+        Ok(License {
+            licensee: payload.licensee,
+            expires_at: payload.exp,
+            machine: payload.machine,
+        })
+    }
+
+    fn verify_revocation_list(
+        &self,
+        blob: &[u8],
+        now: u64,
+    ) -> Result<RevocationList, LicenseError> {
+        if blob.len() > MAX_REVOCATION_LIST_BYTES {
+            return Err(LicenseError::Invalid(
+                "revocation list exceeds 1 MiB limit".into(),
+            ));
+        }
+        let token = std::str::from_utf8(blob)
+            .map_err(|_| LicenseError::Invalid("revocation list is not UTF-8".into()))?
+            .trim();
+        let parts: Vec<&str> = token.split('.').collect();
+        let [prefix, algorithm, kid, payload_b64, sig_b64] = parts.as_slice() else {
+            return Err(LicenseError::Invalid(
+                "revocation list is not ccosrev1.algorithm.kid.payload.signature".into(),
+            ));
+        };
+        if *prefix != "ccosrev1" || *algorithm != ED25519_ALGORITHM {
+            return Err(LicenseError::Invalid(format!(
+                "unknown revocation-list algorithm: {algorithm}"
+            )));
+        }
+        let key = self
+            .key_for(kid)
+            .ok_or_else(|| LicenseError::Invalid(format!("unknown key id: {kid}")))?;
+        let sig_bytes = b64url_decode(sig_b64)
+            .filter(|bytes| bytes.len() == 64)
+            .ok_or_else(|| LicenseError::Invalid("signature is not 64 bytes".into()))?;
+        let sig_array: [u8; 64] = sig_bytes
+            .try_into()
+            .map_err(|_| LicenseError::Invalid("signature is not 64 bytes".into()))?;
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
+        let input = format!("{prefix}.{algorithm}.{kid}.{payload_b64}");
+        use ed25519_dalek::Verifier;
+        key.verify(input.as_bytes(), &signature)
+            .map_err(|_| LicenseError::Invalid("bad revocation-list signature".into()))?;
+        let json = b64url_decode(payload_b64)
+            .filter(|bytes| bytes.len() <= MAX_REVOCATION_LIST_BYTES)
+            .ok_or_else(|| {
+                LicenseError::Invalid("revocation payload is invalid or oversized".into())
+            })?;
+        let list: RevocationList = serde_json::from_slice(&json)
+            .map_err(|e| LicenseError::Invalid(format!("revocation-list JSON: {e}")))?;
+        list.validate(kid, now)?;
+        Ok(list)
     }
 }
 
@@ -445,7 +886,7 @@ const SLH_DSA_SIG_LEN: usize = slh_dsa::params::SLH_DSA_SHAKE_128S.sig_bytes();
 ///
 /// Regenerate with `cargo run --features license-pq --example license_sign_pq keygen`.
 #[cfg(feature = "license-pq")]
-pub const LICENSE_SLH_DSA_PUBLIC_KEY: [u8; 32] = [0u8; 32];
+pub const LICENSE_SLH_DSA_PUBLIC_KEY: [u8; 32] = EMBEDDED_SLH_DSA_PRIMARY;
 
 /// Sign a license token with the 64-byte SLH-DSA **secret key** (the `sk` half of a
 /// `keygen_seed` keypair): emits `slhdsa.<payload_b64>.<sig_b64>`, the signature taken
@@ -468,6 +909,50 @@ pub fn sign_token_slhdsa(signing_sk: &[u8; 64], licensee: &str, exp: Option<u64>
     format!("slhdsa.{payload_b64}.{}", b64url_encode(&sig))
 }
 
+/// Sign a production-format SLH-DSA token with explicit algorithm and key id.
+#[cfg(feature = "license-pq")]
+pub fn sign_token_slhdsa_v1(
+    signing_sk: &[u8; 64],
+    kid: &str,
+    license_id: &str,
+    licensee: &str,
+    exp: Option<u64>,
+    machine: Option<&str>,
+) -> Result<String, LicenseError> {
+    validate_token_identity(kid, license_id, licensee)?;
+    let payload = TokenPayloadV1 {
+        version: LICENSE_TOKEN_VERSION,
+        license_id: license_id.to_string(),
+        licensee: licensee.to_string(),
+        exp,
+        machine: machine.map(str::to_string),
+    };
+    let json = serde_json::to_vec(&payload)
+        .map_err(|e| LicenseError::Invalid(format!("payload JSON: {e}")))?;
+    let payload_b64 = b64url_encode(&json);
+    let signing_input = format!("ccoslic1.{SLH_DSA_ALGORITHM}.{kid}.{payload_b64}");
+    let sig = slh_dsa::sign(signing_sk, signing_input.as_bytes(), SLH_DSA_MODE);
+    Ok(format!("{signing_input}.{}", b64url_encode(&sig)))
+}
+
+/// Sign an offline revocation list using SLH-DSA-SHAKE-128s.
+#[cfg(feature = "license-pq")]
+pub fn sign_revocation_list_slhdsa(
+    signing_sk: &[u8; 64],
+    list: &RevocationList,
+) -> Result<String, LicenseError> {
+    list.validate(&list.key_id, list.generated_at)?;
+    let json = serde_json::to_vec(list)
+        .map_err(|e| LicenseError::Invalid(format!("revocation-list JSON: {e}")))?;
+    if json.len() > MAX_REVOCATION_LIST_BYTES {
+        return Err(LicenseError::Invalid("revocation list is oversized".into()));
+    }
+    let payload = b64url_encode(&json);
+    let input = format!("ccosrev1.{SLH_DSA_ALGORITHM}.{}.{payload}", list.key_id);
+    let signature = slh_dsa::sign(signing_sk, input.as_bytes(), SLH_DSA_MODE);
+    Ok(format!("{input}.{}", b64url_encode(&signature)))
+}
+
 /// The offline **SLH-DSA license verifier**: a pure signature + format check against a
 /// public key (the baked-in [`LICENSE_SLH_DSA_PUBLIC_KEY`] by default). No I/O, no clock,
 /// no network — the same zero-knowledge contract as [`Ed25519Verifier`], post-quantum. An
@@ -476,8 +961,8 @@ pub fn sign_token_slhdsa(signing_sk: &[u8; 64], licensee: &str, exp: Option<u64>
 #[cfg(feature = "license-pq")]
 #[derive(Clone, Default)]
 pub struct SlhDsaVerifier {
-    /// The baked-in public key, or `None` when the placeholder is set (fail-closed).
-    key: Option<[u8; 32]>,
+    keys: Vec<(String, [u8; 32])>,
+    allow_legacy: bool,
 }
 
 #[cfg(feature = "license-pq")]
@@ -487,18 +972,57 @@ impl SlhDsaVerifier {
     /// nothing, so the default build is **fail-closed**: a deployment must paste its own
     /// public key (via the `license_sign_pq keygen` tool) before any token can unlock Pro.
     pub fn new() -> Self {
-        if LICENSE_SLH_DSA_PUBLIC_KEY == [0u8; 32] {
-            return Self { key: None };
+        Self {
+            keys: EMBEDDED_SLH_DSA_KEYS
+                .iter()
+                .map(|(kid, key)| ((*kid).to_string(), *key))
+                .collect(),
+            allow_legacy: false,
         }
-        Self::with_public_key(&LICENSE_SLH_DSA_PUBLIC_KEY)
     }
 
     /// Verifier bound to an explicit public key — the tests derive a throwaway keypair
     /// and verify against its public half, never the embedded vendor key.
     pub fn with_public_key(public_key: &[u8; 32]) -> Self {
         Self {
-            key: Some(*public_key),
+            keys: vec![("legacy-test".to_string(), *public_key)],
+            allow_legacy: true,
         }
+    }
+
+    /// Construct a bounded versioned-token keyring. Legacy tokens are rejected.
+    pub fn with_keyring(keys: &[(&str, [u8; 32])]) -> Result<Self, LicenseError> {
+        if keys.is_empty() || keys.len() > 8 {
+            return Err(LicenseError::Invalid(
+                "SLH-DSA keyring must contain 1..=8 keys".into(),
+            ));
+        }
+        let mut parsed: Vec<(String, [u8; 32])> = Vec::with_capacity(keys.len());
+        for (kid, key) in keys {
+            validate_token_identity(kid, "keyring-validation", "keyring")?;
+            if *key == [0u8; 32] {
+                return Err(LicenseError::Invalid(format!(
+                    "malformed SLH-DSA key: {kid}"
+                )));
+            }
+            if parsed.iter().any(|(existing, _)| existing == kid) {
+                return Err(LicenseError::Invalid(format!(
+                    "duplicate SLH-DSA key id: {kid}"
+                )));
+            }
+            parsed.push(((*kid).to_string(), *key));
+        }
+        Ok(Self {
+            keys: parsed,
+            allow_legacy: false,
+        })
+    }
+
+    fn key_for(&self, kid: &str) -> Option<&[u8; 32]> {
+        self.keys
+            .iter()
+            .find(|(candidate, _)| candidate == kid)
+            .map(|(_, key)| key)
     }
 }
 
@@ -510,13 +1034,25 @@ impl LicenseVerifier for SlhDsaVerifier {
     /// parses, and [`Licensing::tier`] reports it as community (the licensee is retained for
     /// the audit log). `now` is thus unused; the check is pure signature + format.
     fn verify(&self, blob: &[u8], _now: u64) -> Result<License, LicenseError> {
-        let pk = self
-            .key
-            .as_ref()
-            .ok_or_else(|| LicenseError::Invalid("no embedded SLH-DSA public key".into()))?;
+        if blob.len() > MAX_LICENSE_TOKEN_BYTES {
+            return Err(LicenseError::Invalid("token exceeds 64 KiB limit".into()));
+        }
         let token = std::str::from_utf8(blob)
             .map_err(|_| LicenseError::Invalid("token is not UTF-8".into()))?
             .trim();
+        if token.starts_with("ccoslic1.") {
+            return self.verify_v1(token);
+        }
+        if !self.allow_legacy {
+            return Err(LicenseError::Invalid(
+                "legacy token format is disabled for embedded keyrings".into(),
+            ));
+        }
+        let pk = self
+            .keys
+            .first()
+            .map(|(_, key)| key)
+            .ok_or_else(|| LicenseError::Invalid("no embedded SLH-DSA public key".into()))?;
         let rest = token
             .strip_prefix("slhdsa.")
             .ok_or_else(|| LicenseError::Invalid("token is not slhdsa.payload.signature".into()))?;
@@ -546,6 +1082,97 @@ impl LicenseVerifier for SlhDsaVerifier {
             expires_at: payload.exp,
             machine: payload.machine,
         })
+    }
+}
+
+#[cfg(feature = "license-pq")]
+impl SlhDsaVerifier {
+    fn verify_v1(&self, token: &str) -> Result<License, LicenseError> {
+        let parts: Vec<&str> = token.split('.').collect();
+        let [prefix, algorithm, kid, payload_b64, sig_b64] = parts.as_slice() else {
+            return Err(LicenseError::Invalid(
+                "token is not ccoslic1.algorithm.kid.payload.signature".into(),
+            ));
+        };
+        if *prefix != "ccoslic1" || *algorithm != SLH_DSA_ALGORITHM {
+            return Err(LicenseError::Invalid(format!(
+                "unknown or cross-scheme algorithm: {algorithm}"
+            )));
+        }
+        let pk = self
+            .key_for(kid)
+            .ok_or_else(|| LicenseError::Invalid(format!("unknown key id: {kid}")))?;
+        let sig = b64url_decode(sig_b64)
+            .filter(|bytes| bytes.len() == SLH_DSA_SIG_LEN)
+            .ok_or_else(|| LicenseError::Invalid("invalid SLH-DSA signature length".into()))?;
+        let signing_input = format!("{prefix}.{algorithm}.{kid}.{payload_b64}");
+        if !slh_dsa::verify(pk, &sig, signing_input.as_bytes(), SLH_DSA_MODE) {
+            return Err(LicenseError::Invalid("bad signature".into()));
+        }
+        let json = b64url_decode(payload_b64)
+            .filter(|bytes| bytes.len() <= MAX_LICENSE_PAYLOAD_BYTES)
+            .ok_or_else(|| LicenseError::Invalid("payload is invalid or oversized".into()))?;
+        let payload: TokenPayloadV1 = serde_json::from_slice(&json)
+            .map_err(|e| LicenseError::Invalid(format!("payload JSON: {e}")))?;
+        if payload.version != LICENSE_TOKEN_VERSION {
+            return Err(LicenseError::Invalid(format!(
+                "unsupported token version: {}",
+                payload.version
+            )));
+        }
+        validate_token_identity(kid, &payload.license_id, &payload.licensee)?;
+        Ok(License {
+            licensee: payload.licensee,
+            expires_at: payload.exp,
+            machine: payload.machine,
+        })
+    }
+
+    fn verify_revocation_list(
+        &self,
+        blob: &[u8],
+        now: u64,
+    ) -> Result<RevocationList, LicenseError> {
+        if blob.len() > MAX_REVOCATION_LIST_BYTES {
+            return Err(LicenseError::Invalid(
+                "revocation list exceeds 1 MiB limit".into(),
+            ));
+        }
+        let token = std::str::from_utf8(blob)
+            .map_err(|_| LicenseError::Invalid("revocation list is not UTF-8".into()))?
+            .trim();
+        let parts: Vec<&str> = token.split('.').collect();
+        let [prefix, algorithm, kid, payload_b64, sig_b64] = parts.as_slice() else {
+            return Err(LicenseError::Invalid(
+                "revocation list is not ccosrev1.algorithm.kid.payload.signature".into(),
+            ));
+        };
+        if *prefix != "ccosrev1" || *algorithm != SLH_DSA_ALGORITHM {
+            return Err(LicenseError::Invalid(format!(
+                "unknown revocation-list algorithm: {algorithm}"
+            )));
+        }
+        let key = self
+            .key_for(kid)
+            .ok_or_else(|| LicenseError::Invalid(format!("unknown key id: {kid}")))?;
+        let signature = b64url_decode(sig_b64)
+            .filter(|bytes| bytes.len() == SLH_DSA_SIG_LEN)
+            .ok_or_else(|| LicenseError::Invalid("invalid SLH-DSA signature length".into()))?;
+        let input = format!("{prefix}.{algorithm}.{kid}.{payload_b64}");
+        if !slh_dsa::verify(key, &signature, input.as_bytes(), SLH_DSA_MODE) {
+            return Err(LicenseError::Invalid(
+                "bad revocation-list signature".into(),
+            ));
+        }
+        let json = b64url_decode(payload_b64)
+            .filter(|bytes| bytes.len() <= MAX_REVOCATION_LIST_BYTES)
+            .ok_or_else(|| {
+                LicenseError::Invalid("revocation payload is invalid or oversized".into())
+            })?;
+        let list: RevocationList = serde_json::from_slice(&json)
+            .map_err(|e| LicenseError::Invalid(format!("revocation-list JSON: {e}")))?;
+        list.validate(kid, now)?;
+        Ok(list)
     }
 }
 
@@ -654,12 +1281,86 @@ impl Licensing {
             return Self::community();
         };
         match verify_token_blob(&blob, now) {
-            Ok(license) => {
-                Self::licensed(license).enforce_machine_binding(crate::claim::host_fingerprint())
+            Ok(license) => match load_configured_revocation_list(now) {
+                Ok(Some(list)) if list.revokes(&blob, token_license_id(&blob).as_deref()) => {
+                    eprintln!(
+                        "[ccos] license: the signed offline revocation list refuses this license; \
+                         running as community (the core is unaffected)."
+                    );
+                    Self::community()
+                }
+                Ok(_) => Self::licensed(license)
+                    .enforce_machine_binding(crate::claim::host_fingerprint()),
+                Err(error) => {
+                    eprintln!(
+                        "[ccos] license: configured revocation list could not be verified ({error}); \
+                         running as community (the core is unaffected)."
+                    );
+                    Self::community()
+                }
+            },
+            Err(error) => {
+                eprintln!(
+                    "[ccos] license: local token was refused ({error}); running as community \
+                     (the core is unaffected)."
+                );
+                Self::community()
             }
-            Err(_) => Self::community(),
         }
     }
+}
+
+fn load_configured_revocation_list(now: u64) -> Result<Option<RevocationList>, LicenseError> {
+    let Some(path) = std::env::var_os("CCOS_LICENSE_REVOCATIONS_FILE") else {
+        return Ok(None);
+    };
+    let metadata = std::fs::metadata(&path).map_err(|error| {
+        LicenseError::Invalid(format!("configured revocation list is unreadable: {error}"))
+    })?;
+    if metadata.len() > MAX_REVOCATION_LIST_BYTES as u64 {
+        return Err(LicenseError::Invalid(
+            "configured revocation list exceeds 1 MiB limit".into(),
+        ));
+    }
+    let blob = std::fs::read(path).map_err(|error| {
+        LicenseError::Invalid(format!("configured revocation list is unreadable: {error}"))
+    })?;
+    verify_revocation_blob(&blob, now).map(Some)
+}
+
+/// Verify a configured offline revocation list using the same bounded embedded
+/// keyrings as license tokens. Unknown algorithms are never tried against a
+/// different scheme.
+pub fn verify_revocation_blob(blob: &[u8], now: u64) -> Result<RevocationList, LicenseError> {
+    if blob.len() > MAX_REVOCATION_LIST_BYTES {
+        return Err(LicenseError::Invalid(
+            "revocation list exceeds 1 MiB limit".into(),
+        ));
+    }
+    let token = std::str::from_utf8(blob)
+        .map_err(|_| LicenseError::Invalid("revocation list is not UTF-8".into()))?
+        .trim();
+    let mut parts = token.split('.');
+    if parts.next() != Some("ccosrev1") {
+        return Err(LicenseError::Invalid(
+            "unknown revocation-list format".into(),
+        ));
+    }
+    let algorithm = parts
+        .next()
+        .ok_or_else(|| LicenseError::Invalid("missing revocation-list algorithm".into()))?;
+    #[cfg(feature = "license")]
+    if algorithm == ED25519_ALGORITHM {
+        return Ed25519Verifier::new().verify_revocation_list(blob, now);
+    }
+    #[cfg(feature = "license-pq")]
+    if algorithm == SLH_DSA_ALGORITHM {
+        return SlhDsaVerifier::new().verify_revocation_list(blob, now);
+    }
+    let _ = (blob, now);
+    Err(LicenseError::Invalid(format!(
+        "unknown or unavailable revocation-list algorithm: {algorithm}"
+    )))
 }
 
 /// Verify a candidate token `blob` against the compiled-in verifier(s), without
@@ -670,23 +1371,31 @@ impl Licensing {
 /// `license-pq` is compiled in), anything else to ed25519 (when `license` is).
 /// No matching compiled-in verifier is an explicit error, never a silent pass.
 pub fn verify_token_blob(blob: &[u8], now: u64) -> Result<License, LicenseError> {
-    let is_pq = std::str::from_utf8(blob)
-        .map(|s| s.trim().starts_with("slhdsa."))
-        .unwrap_or(false);
+    if blob.len() > MAX_LICENSE_TOKEN_BYTES {
+        return Err(LicenseError::Invalid("token exceeds 64 KiB limit".into()));
+    }
+    let token = std::str::from_utf8(blob)
+        .map_err(|_| LicenseError::Invalid("token is not UTF-8".into()))?
+        .trim();
+    let algorithm = if let Some(rest) = token.strip_prefix("ccoslic1.") {
+        rest.split('.').next().unwrap_or_default()
+    } else if token.starts_with("slhdsa.") {
+        SLH_DSA_ALGORITHM
+    } else {
+        ED25519_ALGORITHM
+    };
     #[cfg(feature = "license-pq")]
-    if is_pq {
+    if algorithm == SLH_DSA_ALGORITHM {
         return SlhDsaVerifier::new().verify(blob, now);
     }
     #[cfg(feature = "license")]
-    if !is_pq {
+    if algorithm == ED25519_ALGORITHM {
         return Ed25519Verifier::new().verify(blob, now);
     }
-    let _ = (blob, now, is_pq);
-    Err(LicenseError::Invalid(
-        "no license verifier compiled in this build matches the token's scheme (rebuild with \
-         --features license and/or license-pq)"
-            .into(),
-    ))
+    let _ = (blob, now);
+    Err(LicenseError::Invalid(format!(
+        "unknown or unavailable license algorithm: {algorithm}"
+    )))
 }
 
 /// Runtime license state and the **feature gate**. Holds an optional verified [`License`] and never
@@ -913,6 +1622,33 @@ mod tests {
     }
 
     #[cfg(feature = "license")]
+    fn test_keyring_verifier() -> Ed25519Verifier {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&TEST_SEED);
+        Ed25519Verifier::with_keyring(&[("test-2026", sk.verifying_key().to_bytes())])
+            .expect("valid test keyring")
+    }
+
+    #[cfg(feature = "license")]
+    fn sign_v1_json(json: &[u8], algorithm: &str, kid: &str) -> String {
+        use ed25519_dalek::{Signer, SigningKey};
+        let payload = b64url_encode(json);
+        let input = format!("ccoslic1.{algorithm}.{kid}.{payload}");
+        let signature = SigningKey::from_bytes(&TEST_SEED).sign(input.as_bytes());
+        format!("{input}.{}", b64url_encode(&signature.to_bytes()))
+    }
+
+    #[cfg(feature = "license")]
+    fn test_revocation_list(entries: Vec<RevocationEntry>) -> RevocationList {
+        RevocationList {
+            version: REVOCATION_LIST_VERSION,
+            key_id: "test-2026".into(),
+            generated_at: NOW - 1,
+            expires_at: Some(NOW + 100),
+            entries,
+        }
+    }
+
+    #[cfg(feature = "license")]
     #[test]
     fn b64url_round_trips_without_padding() {
         let cases: [&[u8]; 8] = [
@@ -941,6 +1677,163 @@ mod tests {
         for f in Feature::ALL {
             assert!(s.require(f, NOW).is_ok());
         }
+    }
+
+    #[cfg(feature = "license")]
+    #[test]
+    fn versioned_test_license_uses_explicit_algorithm_and_kid() {
+        let token = sign_token_v1(
+            &TEST_SEED,
+            "test-2026",
+            "license-001",
+            "acme-corp",
+            Some(NOW + 100),
+            None,
+        )
+        .expect("sign test token");
+        let license = test_keyring_verifier()
+            .verify(token.as_bytes(), NOW)
+            .expect("verify test token");
+        assert_eq!(license.licensee, "acme-corp");
+        assert_eq!(
+            token_license_id(token.as_bytes()).as_deref(),
+            Some("license-001")
+        );
+        assert!(token.starts_with("ccoslic1.ed25519.test-2026."));
+    }
+
+    #[cfg(feature = "license")]
+    #[test]
+    fn versioned_tokens_reject_wrong_kid_future_version_and_duplicate_fields() {
+        let wrong_kid =
+            sign_token_v1(&TEST_SEED, "other-key", "license-001", "acme", None, None).unwrap();
+        assert!(test_keyring_verifier()
+            .verify(wrong_kid.as_bytes(), NOW)
+            .is_err());
+
+        let future = sign_v1_json(
+            br#"{"version":2,"license_id":"license-001","licensee":"acme"}"#,
+            ED25519_ALGORITHM,
+            "test-2026",
+        );
+        assert!(test_keyring_verifier()
+            .verify(future.as_bytes(), NOW)
+            .is_err());
+
+        let duplicate = sign_v1_json(
+            br#"{"version":1,"version":1,"license_id":"license-001","licensee":"acme"}"#,
+            ED25519_ALGORITHM,
+            "test-2026",
+        );
+        assert!(test_keyring_verifier()
+            .verify(duplicate.as_bytes(), NOW)
+            .is_err());
+    }
+
+    #[cfg(feature = "license")]
+    #[test]
+    fn versioned_tokens_reject_cross_scheme_invalid_signature_and_oversize() {
+        let cross_scheme = sign_v1_json(
+            br#"{"version":1,"license_id":"license-001","licensee":"acme"}"#,
+            SLH_DSA_ALGORITHM,
+            "test-2026",
+        );
+        assert!(test_keyring_verifier()
+            .verify(cross_scheme.as_bytes(), NOW)
+            .is_err());
+
+        let mut invalid = sign_token_v1(&TEST_SEED, "test-2026", "license-001", "acme", None, None)
+            .unwrap()
+            .into_bytes();
+        let last = invalid.len() - 1;
+        invalid[last] = if invalid[last] == b'A' { b'B' } else { b'A' };
+        assert!(test_keyring_verifier().verify(&invalid, NOW).is_err());
+
+        assert!(test_keyring_verifier()
+            .verify(&vec![b'A'; MAX_LICENSE_TOKEN_BYTES + 1], NOW)
+            .is_err());
+    }
+
+    #[cfg(feature = "license")]
+    #[test]
+    fn embedded_keyring_is_fail_closed_and_build_metadata_is_explicit() {
+        assert!(matches!(
+            license_build_profile(),
+            "none" | "test" | "production"
+        ));
+        assert!(Ed25519Verifier::with_keyring(&[("bad", [0u8; 32])]).is_err());
+        let token =
+            sign_token_v1(&TEST_SEED, "test-2026", "license-001", "acme", None, None).unwrap();
+        if embedded_license_key_ids().is_empty() {
+            assert!(Ed25519Verifier::new()
+                .verify(token.as_bytes(), NOW)
+                .is_err());
+            assert_eq!(license_build_profile(), "none");
+        }
+    }
+
+    #[cfg(feature = "license")]
+    #[test]
+    fn signed_revocations_match_license_id_and_token_digest() {
+        let token =
+            sign_token_v1(&TEST_SEED, "test-2026", "license-001", "acme", None, None).unwrap();
+        let by_id = test_revocation_list(vec![RevocationEntry {
+            license_id: Some("license-001".into()),
+            token_sha256: None,
+            revoked_at: NOW - 1,
+            reason: RevocationReason::Superseded,
+        }]);
+        let signed = sign_revocation_list_ed25519(&TEST_SEED, &by_id).unwrap();
+        let verified = test_keyring_verifier()
+            .verify_revocation_list(signed.as_bytes(), NOW)
+            .unwrap();
+        assert!(verified.revokes(token.as_bytes(), Some("license-001")));
+
+        let by_digest = test_revocation_list(vec![RevocationEntry {
+            license_id: None,
+            token_sha256: Some(token_sha256(token.as_bytes())),
+            revoked_at: NOW - 1,
+            reason: RevocationReason::Compromised,
+        }]);
+        let signed = sign_revocation_list_ed25519(&TEST_SEED, &by_digest).unwrap();
+        let verified = test_keyring_verifier()
+            .verify_revocation_list(signed.as_bytes(), NOW)
+            .unwrap();
+        assert!(verified.revokes(token.as_bytes(), None));
+    }
+
+    #[cfg(feature = "license")]
+    #[test]
+    fn revocation_lists_reject_unsigned_tampered_expired_and_ambiguous_input() {
+        let list = test_revocation_list(vec![]);
+        let signed = sign_revocation_list_ed25519(&TEST_SEED, &list).unwrap();
+        assert!(test_keyring_verifier()
+            .verify_revocation_list(b"unsigned local file", NOW)
+            .is_err());
+        let mut tampered = signed.into_bytes();
+        let last = tampered.len() - 1;
+        tampered[last] = if tampered[last] == b'A' { b'B' } else { b'A' };
+        assert!(test_keyring_verifier()
+            .verify_revocation_list(&tampered, NOW)
+            .is_err());
+
+        let mut expired = test_revocation_list(vec![]);
+        expired.expires_at = Some(NOW - 1);
+        let signed = sign_revocation_list_ed25519(&TEST_SEED, &expired).unwrap();
+        assert!(test_keyring_verifier()
+            .verify_revocation_list(signed.as_bytes(), NOW)
+            .is_err());
+
+        let ambiguous = test_revocation_list(vec![RevocationEntry {
+            license_id: None,
+            token_sha256: None,
+            revoked_at: NOW - 1,
+            reason: RevocationReason::Administrative,
+        }]);
+        assert!(sign_revocation_list_ed25519(&TEST_SEED, &ambiguous).is_err());
+        assert!(test_keyring_verifier()
+            .verify_revocation_list(&vec![b'A'; MAX_REVOCATION_LIST_BYTES + 1], NOW)
+            .is_err());
     }
 
     #[cfg(feature = "license")]

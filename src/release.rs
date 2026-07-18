@@ -23,6 +23,7 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "license")]
 use crate::license::LicenseError;
 
 /// The scheme tag prefixing (and signed into) every release manifest.
