@@ -3,6 +3,7 @@ name = "octacore"
 version = "0.1.0"
 edition = "2024"
 license = "LicenseRef-TarekZekriti-Dual"
+publish = false
 description = "Intelligent assembly of the Memorithm memory triad (CCOS causal + OctaSoma semantic + SLHAv2 attention) into one cascade."
 repository = "https://github.com/Memorithm/CCOS_EXTENDED"
 

@@ -8,6 +8,7 @@ name = "ccos"
 version = "0.4.0"
 edition = "2021"
 license = "LicenseRef-TarekZekriti-Dual"
+publish = false
 # The `ccos` CLI is the primary binary. Declaring it here keeps a bare
 # `cargo run` (e.g. the CI smoke `cargo run --features llm -- version`)
 # unambiguous now that the workspace also ships the `ccos-migrate` tool.
@@ -287,6 +288,7 @@ required-features = ["octasoma"]
 # Build/test a fused member explicitly with `-p ccos-rsi`, `-p ccos-scirust`, etc.
 [workspace]
 resolver = "2"
+exclude = ["fuzz"]
 members = [
     "crates/ccos-memory-runtime",
     "crates/ccos-rsi",
@@ -312,5 +314,3 @@ default-members = ["."]
 rust-version = "1.89"
 license = "LicenseRef-TarekZekriti-Dual"
 repository = "https://github.com/Memorithm/CCOS_EXTENDED"
-
-
