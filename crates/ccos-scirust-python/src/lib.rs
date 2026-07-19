@@ -72,6 +72,11 @@ impl PySlhaTile {
         if !q_sign.is_c_contiguous() {
             return Err(PyValueError::new_err("q_sign must be C-contiguous"));
         }
+        if (q_coarse.buf_ptr() as usize) % std::mem::align_of::<f32>() != 0
+            || (q_sign.buf_ptr() as usize) % std::mem::align_of::<u64>() != 0
+        {
+            return Err(PyValueError::new_err("buffers are not correctly aligned"));
+        }
 
         // SAFETY: We checked dimensions, shape and contiguity.
         // PyBuffer ensures the memory is valid for the duration of the call.

@@ -17,7 +17,6 @@
 //! [`ElasticKvCache`]: ccos_scirust::ccos::ElasticKvCache
 //! [`LatentSafetyGuard`]: ccos_scirust::safety::LatentSafetyGuard
 
-#![cfg(feature = "slhav2-full")]
 // REPLAY-RELAX: this backend is only compiled behind `slhav2-full`.
 
 use std::collections::HashMap;
@@ -346,8 +345,8 @@ mod tests {
         // 128-byte payload so `tile_from_payload` round-trips through the ABI.
         use ccos_scirust::attention::slha_v2::{quantize_latent_grouped, SciRustSlhaTile};
         let mut v = [0.0f32; D_C];
-        for d in 0..D_C {
-            v[d] = ((id as i32 * 7 + d as i32 * 3) % 11) as f32 - 5.0;
+        for (d, value) in v.iter_mut().enumerate() {
+            *value = ((id as i32 * 7 + d as i32 * 3) % 11) as f32 - 5.0;
         }
         let (latent_kv, scale, group_scales) = quantize_latent_grouped(&v);
         let tile = SciRustSlhaTile {

@@ -101,15 +101,16 @@ impl NeuralEncoder {
         // `CCOS_EGRESS_ALLOW`, but until they do a remote endpoint is denied here
         // — fail fast, never silently egress text off-host.
         let url = format!("{}/api/embeddings", endpoint.trim_end_matches('/'));
-        crate::egress::EgressAllowlist::from_env()
-            .check(&url)
+        let validated = crate::egress::EgressAllowlist::from_env()
+            .validate(&url)
             .map_err(|e| NeuralEmbedError::EgressDenied(e.to_string()))?;
 
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .connect_timeout(Duration::from_secs(3))
-            .build()
-            .map_err(|e| NeuralEmbedError::Unreachable(e.to_string()))?;
+        let client = crate::egress::secure_blocking_client(
+            &validated,
+            Duration::from_secs(3),
+            Duration::from_secs(30),
+        )
+        .map_err(|e| NeuralEmbedError::Unreachable(e.to_string()))?;
         let mut enc = Self {
             client,
             url,
@@ -142,7 +143,8 @@ impl NeuralEncoder {
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }
-        resp.text().map_err(|e| e.to_string())
+        let body = crate::egress::blocking_response_bytes_limited(resp, 8 * 1024 * 1024)?;
+        String::from_utf8(body).map_err(|_| "embedding response is not UTF-8".to_string())
     }
 }
 

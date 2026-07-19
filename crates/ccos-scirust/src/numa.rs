@@ -100,8 +100,8 @@ fn check_align(align: usize) -> Result<(), NumaError> {
 /// Allocation heap alignée, portable (aucune dépendance, toutes cibles).
 ///
 /// La mémoire est allouée via l'allocateur global `std::alloc` avec un `Layout`
-/// d'alignement `align` (128 o par défaut). Le buffer est non initialisé à
-/// l'allocation ; utiliser [`AlignedBuffer::zero`] pour le remplir de zéros.
+/// d'alignement `align` (128 o par défaut) et est immédiatement initialisée à
+/// zéro afin que `as_slice` ne puisse jamais exposer des octets non initialisés.
 pub struct AlignedBuffer {
     ptr: NonNull<u8>,
     layout: Layout,
@@ -109,7 +109,7 @@ pub struct AlignedBuffer {
 }
 
 impl AlignedBuffer {
-    /// Alloue `len` octets alignés sur `align` (non initialisé).
+    /// Alloue `len` octets alignés sur `align`, initialisés à zéro.
     pub fn new(len: usize, align: usize) -> Result<Self, NumaError> {
         check_align(align)?;
         if len == 0 {
@@ -125,6 +125,8 @@ impl AlignedBuffer {
         // SAFETY: layout valide (taille > 0, align power-of-2, pas d'overflow).
         let ptr = unsafe { alloc::alloc(layout) };
         let ptr = NonNull::new(ptr).ok_or(NumaError::Alloc)?;
+        // SAFETY: ptr references the complete allocation described by layout.
+        unsafe { core::ptr::write_bytes(ptr.as_ptr(), 0, len) };
         Ok(Self { ptr, layout, len })
     }
 
@@ -158,8 +160,7 @@ impl AlignedBuffer {
         self.ptr.as_ptr()
     }
 
-    /// Slice en lecture. Contenu non initialisé tant que le buffer n'est pas écrit
-    /// (le lecteur assume la sécurité mémoire).
+    /// Slice en lecture. Le contenu est toujours initialisé.
     pub fn as_slice(&self) -> &[u8] {
         if self.len == 0 {
             &[]

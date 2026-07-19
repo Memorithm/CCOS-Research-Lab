@@ -549,10 +549,6 @@ fn hallucinates(reply: &str, task: &Task) -> bool {
 
 /// Provider abstraction: returns a model reply, or `None` if no LLM is configured.
 async fn ask(prompt: &str) -> Option<String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .ok()?;
     if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
         let base = std::env::var("ANTHROPIC_BASE_URL")
             .unwrap_or_else(|_| "https://api.anthropic.com".into());
@@ -560,12 +556,7 @@ async fn ask(prompt: &str) -> Option<String> {
         // only, so the Anthropic API host is denied unless the operator added it
         // to `CCOS_EGRESS_ALLOW`. Refused ⇒ `None` (no LLM) rather than a call.
         let anthropic_url = format!("{base}/v1/messages");
-        if crate::egress::EgressAllowlist::from_env()
-            .check(&anthropic_url)
-            .is_err()
-        {
-            return None;
-        }
+        let client = eval_http_client(&anthropic_url)?;
         let model =
             std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-3-5-sonnet-latest".into());
         // No `temperature`: reasoning models (e.g. deepseek-v4-pro) emit a
@@ -577,17 +568,15 @@ async fn ask(prompt: &str) -> Option<String> {
             "max_tokens": 4096,
             "messages": [{"role": "user", "content": prompt}],
         });
-        let resp = client
+        let response = client
             .post(anthropic_url)
             .header("x-api-key", key)
             .header("anthropic-version", "2023-06-01")
             .json(&body)
             .send()
             .await
-            .ok()?
-            .json::<serde_json::Value>()
-            .await
             .ok()?;
+        let resp = eval_json_response(response).await?;
         // The content is an array of blocks; with reasoning models it is
         // [{type:"thinking",…}, {type:"text",text:…}]. Return the text block.
         return resp["content"].as_array().and_then(|blocks| {
@@ -605,28 +594,21 @@ async fn ask(prompt: &str) -> Option<String> {
         // the OpenAI host is denied under the default localhost-only policy
         // unless `CCOS_EGRESS_ALLOW` widens it. Refused ⇒ `None`.
         let openai_url = format!("{base}/v1/chat/completions");
-        if crate::egress::EgressAllowlist::from_env()
-            .check(&openai_url)
-            .is_err()
-        {
-            return None;
-        }
+        let client = eval_http_client(&openai_url)?;
         let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".into());
         let body = serde_json::json!({
             "model": model,
             "temperature": 0,
             "messages": [{"role": "user", "content": prompt}],
         });
-        let resp = client
+        let response = client
             .post(openai_url)
             .bearer_auth(key)
             .json(&body)
             .send()
             .await
-            .ok()?
-            .json::<serde_json::Value>()
-            .await
             .ok()?;
+        let resp = eval_json_response(response).await?;
         return resp["choices"][0]["message"]["content"]
             .as_str()
             .map(String::from);
@@ -637,29 +619,39 @@ async fn ask(prompt: &str) -> Option<String> {
         // remote `OLLAMA_ENDPOINT` is denied under the default policy unless
         // `CCOS_EGRESS_ALLOW` allows it. Refused ⇒ `None`.
         let ollama_url = format!("{endpoint}/api/generate");
-        if crate::egress::EgressAllowlist::from_env()
-            .check(&ollama_url)
-            .is_err()
-        {
-            return None;
-        }
+        let client = eval_http_client(&ollama_url)?;
         let model = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3".into());
         let body = serde_json::json!({
             "model": model, "prompt": prompt, "stream": false,
             "options": {"temperature": 0},
         });
-        let resp = client
-            .post(ollama_url)
-            .json(&body)
-            .send()
-            .await
-            .ok()?
-            .json::<serde_json::Value>()
-            .await
-            .ok()?;
+        let response = client.post(ollama_url).json(&body).send().await.ok()?;
+        let resp = eval_json_response(response).await?;
         return resp["response"].as_str().map(String::from);
     }
     None
+}
+
+fn eval_http_client(url: &str) -> Option<reqwest::Client> {
+    let endpoint = crate::egress::EgressAllowlist::from_env()
+        .validate(url)
+        .ok()?;
+    crate::egress::secure_async_client(
+        &endpoint,
+        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(120),
+    )
+    .ok()
+}
+
+async fn eval_json_response(response: reqwest::Response) -> Option<serde_json::Value> {
+    if !response.status().is_success() {
+        return None;
+    }
+    let body = crate::egress::response_bytes_limited(response, 16 * 1024 * 1024)
+        .await
+        .ok()?;
+    serde_json::from_slice(&body).ok()
 }
 
 fn provider_label() -> (String, String) {

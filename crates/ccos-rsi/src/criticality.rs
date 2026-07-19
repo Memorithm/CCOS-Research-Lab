@@ -5,7 +5,7 @@
 //! théorie explicite des modes de défaillance, de leur **criticité**, et d'un
 //! objectif **ajusté au risque**.
 //!
-//! Pour chaque mode de défaillance `f`, on définit (échelle [0,1]) :
+//! Pour chaque mode de défaillance `f`, on définit (échelle `[0,1]`) :
 //!   - `severity`   S_f  : gravité de l'effet ;
 //!   - `occurrence` O_f  : probabilité d'occurrence (dépend de l'état vivant) ;
 //!   - `detection`  D_f  : *difficulté* de détection (0 = trivial, 1 = indétectable).

@@ -28,8 +28,6 @@
 //! `score`/`refine` et ne voit que des nombres. Il n'exécute jamais de code
 //! généré et ne se modifie pas. Le contrat de sûreté (terminaison, non-régression
 //! `is_monotone`, déterminisme par graine) est porté par le moteur réel.
-#![cfg(feature = "scirust")]
-
 use crate::synthesis::Expr;
 use rand::rngs::StdRng;
 use rand::Rng as _;

@@ -23,7 +23,7 @@
 //! (Mode A tools vs Mode B hook — `docs/SELF_ANALYSIS.md`).
 
 use std::io;
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -195,21 +195,19 @@ fn probe_ollama() -> OllamaProbe {
         std::env::var("OLLAMA_ENDPOINT").unwrap_or_else(|_| "http://localhost:11434".to_string());
     // Same air-gap gate as every network call site: the probe itself must not
     // become an egress bypass.
-    if let Err(e) = EgressAllowlist::from_env().check(&endpoint) {
-        return OllamaProbe::RefusedByEgress {
-            endpoint,
-            reason: e.to_string(),
-        };
-    }
-    let reachable = host_port(&endpoint)
-        .and_then(|(host, port)| {
-            (host.as_str(), port)
-                .to_socket_addrs()
-                .ok()?
-                .next()
-                .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok())
-        })
-        .unwrap_or(false);
+    let validated = match EgressAllowlist::from_env().validate(&endpoint) {
+        Ok(validated) => validated,
+        Err(e) => {
+            return OllamaProbe::RefusedByEgress {
+                endpoint,
+                reason: e.to_string(),
+            }
+        }
+    };
+    let reachable = validated
+        .addresses()
+        .iter()
+        .any(|address| TcpStream::connect_timeout(address, Duration::from_millis(300)).is_ok());
     if reachable {
         OllamaProbe::Reachable { endpoint }
     } else {
@@ -219,6 +217,7 @@ fn probe_ollama() -> OllamaProbe {
 
 /// `scheme://host[:port][/…]` → `(host, port)`, defaulting the port from the
 /// scheme. `None` when there is no authority to probe.
+#[cfg(test)]
 fn host_port(url: &str) -> Option<(String, u16)> {
     let (scheme, rest) = url.split_once("://")?;
     let authority = rest.split(['/', '?', '#']).next()?;

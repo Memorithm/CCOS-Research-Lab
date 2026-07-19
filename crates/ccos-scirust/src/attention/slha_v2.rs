@@ -1289,7 +1289,7 @@ impl SciRustSlhaTile {
     /// [`FLAG_TQ3_NOCORR`]). The dispatcher calls this unconditionally on
     /// aarch64, like [`Self::compute_score_neon`].
     ///
-    /// Same decode strategy as [`Self::compute_score_avx2_tq3`], split into
+    /// Same decode strategy as the AVX2 TQ3 scorer, split into
     /// two 4-lane quads per 8-dim block: `vshlq_u32` with negative per-lane
     /// counts is the NEON variable right-shift.
     ///
@@ -1449,7 +1449,7 @@ impl SciRustSlhaTile {
     /// coarse term of a [`FLAG_MIXED`] tile. The dispatcher calls this
     /// unconditionally on aarch64, like [`Self::compute_score_neon`].
     ///
-    /// Same decode strategy as [`Self::compute_score_avx2_mixed`], in
+    /// Same decode strategy as the AVX2 mixed scorer, in
     /// 4-lane quads: the 8-bit head (zero-point 128, scale `gs[0]`) as two
     /// quads, then [`Self::compute_score_neon`]'s denibbling shifted
     /// 8 bytes/8 dims with group scales `gs[1..]`; the dropped tail decodes

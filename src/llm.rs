@@ -90,10 +90,16 @@ pub struct LlmClient {
 impl LlmClient {
     /// Fallible constructor — fails if the HTTP client cannot be built.
     pub fn try_new(config: LlmConfig) -> Result<Self, String> {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(config.timeout_secs))
-            .build()
-            .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+        let endpoint = format!("{}/api/generate", config.endpoint.trim_end_matches('/'));
+        let validated = crate::egress::EgressAllowlist::from_env()
+            .validate(&endpoint)
+            .map_err(|e| e.to_string())?;
+        let client = crate::egress::secure_async_client(
+            &validated,
+            std::time::Duration::from_secs(3),
+            std::time::Duration::from_secs(config.timeout_secs),
+        )
+        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
 
         let guard = GuardLayer::new(config.guard_config.clone());
 
@@ -140,14 +146,17 @@ impl LlmClient {
             }),
         };
 
-        let endpoint = format!("{}/api/generate", self.config.endpoint);
+        let endpoint = format!(
+            "{}/api/generate",
+            self.config.endpoint.trim_end_matches('/')
+        );
 
         // Air-gap control (CCOS_EXTENDED plan P4): the LLM endpoint MUST be on
         // the egress allowlist (default localhost/loopback only). A non-allowed
         // host short-circuits to the fallback response — no network call is
         // ever made to a host the operator did not explicitly allow via
         // `CCOS_EGRESS_ALLOW`. This is the `llm` feature's one egress site.
-        if let Err(e) = crate::egress::EgressAllowlist::from_env().check(&endpoint) {
+        if let Err(e) = crate::egress::EgressAllowlist::from_env().validate(&endpoint) {
             let latency = start.elapsed().as_millis() as u64;
             let guard_result = self.guard.validate_and_sanitize("");
             let fallback = GuardLayer::fallback_response();
@@ -174,7 +183,11 @@ impl LlmClient {
             }
 
             match self.client.post(&endpoint).json(&request).send().await {
-                Ok(resp) => match resp.json::<LlmResponse>().await {
+                Ok(resp) => match crate::egress::response_bytes_limited(resp, 8 * 1024 * 1024)
+                    .await
+                    .and_then(|body| {
+                        serde_json::from_slice::<LlmResponse>(&body).map_err(|e| e.to_string())
+                    }) {
                     Ok(llm_resp) => {
                         let latency = start.elapsed().as_millis() as u64;
                         let guard_result = self.guard.validate_and_sanitize(&llm_resp.response);

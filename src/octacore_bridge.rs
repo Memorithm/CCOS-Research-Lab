@@ -37,8 +37,6 @@
 //! persisted next to the workspace) makes that amortized instead of one
 //! embedding call per node per recall.
 
-#![cfg(feature = "octacore")]
-
 use crate::external_memory::{ExternalMemory, Recall};
 use crate::license::{Feature, LicenseError, Licensing};
 use octacore::{Cascade, CausalScope, RecallItem, RecallWindow, ScopeItem};

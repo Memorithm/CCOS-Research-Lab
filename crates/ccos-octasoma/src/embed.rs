@@ -184,6 +184,7 @@ impl Embedder for OllamaEmbedder {
 
 /// POSTs `body` as JSON to an `http://` URL and returns the response body.
 fn http_post_json(url: &str, body: &str, timeout: Duration) -> io::Result<String> {
+    const MAX_HTTP_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
     let rest = url.strip_prefix("http://").ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -194,15 +195,90 @@ fn http_post_json(url: &str, body: &str, timeout: Duration) -> io::Result<String
         Some(i) => (&rest[..i], &rest[i..]),
         None => (rest, "/"),
     };
-    let (host, port) = match authority.rfind(':') {
-        Some(i) => (
-            &authority[..i],
-            authority[i + 1..].parse::<u16>().unwrap_or(80),
-        ),
-        None => (authority, 80u16),
+    if authority.is_empty()
+        || authority.contains('@')
+        || authority
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace())
+        || !path.starts_with('/')
+        || path.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid local HTTP endpoint",
+        ));
+    }
+    let (host, port) = if let Some(inner) = authority.strip_prefix('[') {
+        let close = inner.find(']').ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "unterminated IPv6 endpoint")
+        })?;
+        let host = &inner[..close];
+        let suffix = &inner[close + 1..];
+        let port = if suffix.is_empty() {
+            80
+        } else {
+            suffix
+                .strip_prefix(':')
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "invalid IPv6 endpoint")
+                })?
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port != 0)
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "invalid endpoint port")
+                })?
+        };
+        (host, port)
+    } else {
+        if authority.matches(':').count() > 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "IPv6 endpoints must be bracketed",
+            ));
+        }
+        match authority.rsplit_once(':') {
+            Some((host, raw_port)) => (
+                host,
+                raw_port
+                    .parse::<u16>()
+                    .ok()
+                    .filter(|port| *port != 0)
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidInput, "invalid endpoint port")
+                    })?,
+            ),
+            None => (authority, 80u16),
+        }
     };
+    let mut addresses: Vec<_> = std::net::ToSocketAddrs::to_socket_addrs(&(host, port))?
+        .take(17)
+        .collect();
+    if addresses.is_empty() || addresses.len() > 16 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "local endpoint resolution was empty or oversized",
+        ));
+    }
+    addresses.sort_unstable();
+    addresses.dedup();
+    for address in &addresses {
+        let normalized = match address.ip() {
+            std::net::IpAddr::V6(ip) => ip
+                .to_ipv4_mapped()
+                .map(std::net::IpAddr::V4)
+                .unwrap_or(std::net::IpAddr::V6(ip)),
+            ip => ip,
+        };
+        if !normalized.is_loopback() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Ollama endpoint did not resolve exclusively to loopback",
+            ));
+        }
+    }
 
-    let mut stream = TcpStream::connect((host, port))?;
+    let mut stream = TcpStream::connect_timeout(&addresses[0], timeout)?;
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
 
@@ -214,8 +290,18 @@ fn http_post_json(url: &str, body: &str, timeout: Duration) -> io::Result<String
     stream.write_all(request.as_bytes())?;
     stream.flush()?;
 
-    let mut raw = String::new();
-    stream.read_to_string(&mut raw)?;
+    let mut raw = Vec::new();
+    stream
+        .take(MAX_HTTP_RESPONSE_BYTES + 1)
+        .read_to_end(&mut raw)?;
+    if raw.len() as u64 > MAX_HTTP_RESPONSE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP response exceeds 16 MiB",
+        ));
+    }
+    let raw = String::from_utf8(raw)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "HTTP response is not UTF-8"))?;
 
     let body_start = raw
         .find("\r\n\r\n")
@@ -305,5 +391,19 @@ mod tests {
     fn extract_rejects_non_numeric() {
         let resp = r#"{"embedding":[0.1, "oops", 0.2]}"#;
         assert!(extract_float_array(resp, "embedding").is_none());
+    }
+
+    #[test]
+    fn ollama_http_transport_rejects_non_loopback_and_authority_tricks() {
+        let timeout = Duration::from_millis(10);
+        for url in [
+            "http://8.8.8.8:80/api/embeddings",
+            "http://169.254.169.254/api/embeddings",
+            "http://user@localhost:11434/api/embeddings",
+            "http://localhost:0/api/embeddings",
+            "https://localhost:11434/api/embeddings",
+        ] {
+            assert!(http_post_json(url, "{}", timeout).is_err(), "{url}");
+        }
     }
 }

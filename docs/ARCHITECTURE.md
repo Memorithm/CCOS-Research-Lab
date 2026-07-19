@@ -53,7 +53,7 @@ for the audit.
 | `slha_full` | `slhav2-full` | Pro gate to the REAL SLHAv2 kernel (backend + safety guard) | `FullSlhaAccess` |
 | `octa_index` | `octasoma` | OctaSoma-backed region-sharded semantic index + conformal feedback | `SemanticMemoryAccess`, `SemanticFeedback` |
 | `octacore_bridge` | `octacore` | CCOS-side half of the dep inversion: `ExternalMemory` as a cascade scope | `CcosScope`, `CausalCascadeAccess` |
-| `rsi_bridge` | `rsi` / `rsi-dgm` | RSI audit adapter + the hard-sandboxed DGM (allowlist, air-gapped evaluator, hash-chain audit) | `CcosAudit`, `RsiAccess`, `DgmAccess`, `GuardedDgm` |
+| `rsi_bridge` | `rsi` / `rsi-dgm` | RSI audit adapter + Linux OS-sandboxed DGM (allowlist, air-gapped evaluator, hash-chain audit) | `CcosAudit`, `RsiAccess`, `DgmAccess`, `GuardedDgm` |
 | `mcp_ext` | any premium | The `slha.*` / `octa.*` / `rsi.*` MCP namespaces multiplexed into `mcp` | `tool_specs`, `call_tool` |
 | `crates/ccos-memory-runtime` | `slhav2`(+`-full`) | Runtime-neutral `MemoryProvider` middleware (distilled tile backend; scirust backend behind `slhav2-full`) | `MemoryProvider`, `ScirustBackend` |
 | `crates/ccos-scirust` (+`-mcp`,`-c`,`-python`) | `slhav2-full` | The vendored SLHAv2 kernel: 128-byte tiles, INT4/grouped/NF4/mixed/TQ3 codecs, SIMD, `ElasticKvCache`, `LatentSafetyGuard`, EventLog persistence | `SciRustSlhaTile`, `ElasticKvCache` |

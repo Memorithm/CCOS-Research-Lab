@@ -46,8 +46,6 @@
 //!   relax, visible in the type and never the default. The default CCOS build
 //!   compiles none of this (`rsi` feature off).
 
-#![cfg(feature = "rsi")]
-
 use std::path::{Path, PathBuf};
 
 use crate::event_log::{EventLog, EventPayload, EventType};
@@ -183,7 +181,7 @@ impl DgmAccess {
     // caller must SEE the allowlist, the guard and the seed at the call site —
     // that visibility is part of the DGM security contract.
     #[allow(clippy::too_many_arguments)]
-    pub fn guarded_dgm<P: Proposer, E: Evaluator>(
+    pub fn guarded_dgm<P: Proposer, E: PromotionEvaluator>(
         &self,
         archive: Archive,
         proposer: P,
@@ -206,6 +204,9 @@ pub struct GuardedDgmConfig {
     /// this set is refused before evaluation and never reaches the live tree.
     /// This is the primary security control.
     pub editable_allowlist: Vec<String>,
+    /// High-risk targets require a second, explicit allowlist entry even when
+    /// present in `editable_allowlist`.
+    pub high_risk_allowlist: Vec<String>,
     /// Directory for `promote_to_live`'s `.rsi_backups` (originals before patch).
     /// Defaults to `<workspace_root>/.rsi_backups`.
     pub backup_dir: Option<PathBuf>,
@@ -215,10 +216,21 @@ impl GuardedDgmConfig {
     /// Whether `target` (a relative patch target) is on the editable allowlist.
     /// Normalised: a leading `./` is stripped; the comparison is exact.
     pub fn is_editable(&self, target: &str) -> bool {
-        let t = target.trim_start_matches("./");
-        self.editable_allowlist
+        let Some(target) = normalize_relative_target(target) else {
+            return false;
+        };
+        let editable = self
+            .editable_allowlist
             .iter()
-            .any(|a| a.trim_start_matches("./") == t)
+            .filter_map(|allowed| normalize_relative_target(allowed))
+            .any(|allowed| allowed == target);
+        editable
+            && (!is_high_risk_target(&target)
+                || self
+                    .high_risk_allowlist
+                    .iter()
+                    .filter_map(|allowed| normalize_relative_target(allowed))
+                    .any(|allowed| allowed == target))
     }
 
     pub fn backup_dir_or(&self, workspace_root: &Path) -> PathBuf {
@@ -226,6 +238,32 @@ impl GuardedDgmConfig {
             .clone()
             .unwrap_or_else(|| workspace_root.join(".rsi_backups"))
     }
+}
+
+fn normalize_relative_target(target: &str) -> Option<String> {
+    use std::path::Component;
+    let path = Path::new(target);
+    if target.is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(path.to_string_lossy().into_owned())
+}
+
+fn is_high_risk_target(target: &str) -> bool {
+    let path = Path::new(target);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    matches!(name, "Cargo.toml" | "Cargo.lock" | "build.rs")
+        || target.starts_with(".cargo/")
+        || target.starts_with(".github/workflows/")
+        || target == "src/rsi_bridge.rs"
 }
 
 /// A [`Proposer`] wrapper that refuses proposals whose `target` is not on the
@@ -280,7 +318,7 @@ impl<P: Proposer> Proposer for GuardedProposer<P> {
 /// evaluated step in a CCOS [`EventLog`]. Accepted patches are promoted to the
 /// live tree only through a re-checked allowlist + a recorded `GraphMutation`
 /// event.
-pub struct GuardedDgm<P: Proposer, E: Evaluator> {
+pub struct GuardedDgm<P: Proposer, E: PromotionEvaluator> {
     engine: DgmEngine<GuardedProposer<P>, E>,
     sandbox: GuardedDgmConfig,
     guard: GuardLayer,
@@ -303,7 +341,7 @@ pub struct GuardedStepOutcome {
     pub audit_head: String,
 }
 
-impl<P: Proposer, E: Evaluator> GuardedDgm<P, E> {
+impl<P: Proposer, E: PromotionEvaluator> GuardedDgm<P, E> {
     /// Assemble a guarded DGM. The `proposer` is wrapped in a [`GuardedProposer`]
     /// enforcing `sandbox.editable_allowlist`; the `evaluator` runs in rsi's
     /// isolated `WorkspaceSnapshot` (use [`GuardedCargoEvaluator`] for the
@@ -340,7 +378,27 @@ impl<P: Proposer, E: Evaluator> GuardedDgm<P, E> {
     /// in the tamper-evident timeline. Returns the audited outcome.
     pub fn run_step(&mut self, audit: &mut EventLog) -> rsi::dgm::Result<GuardedStepOutcome> {
         let live_root = self.live_root.clone();
-        let outcome = self.engine.step()?;
+        let live_before = source_tree_digest(&live_root)?;
+        let outcome = match self.engine.step() {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                audit.append(
+                    EventType::AgentAction,
+                    EventPayload::Custom {
+                        key: "rsi_dgm_evaluation_incomplete".to_string(),
+                        value: error.to_string(),
+                    },
+                );
+                return Err(error);
+            }
+        };
+        let evidence = self.engine.evaluator().take_attestation();
+        let live_after_evaluation = source_tree_digest(&live_root)?;
+        let evidence_valid = evidence.as_ref().is_some_and(|evidence| {
+            evidence.source_before == evidence.source_after
+                && live_before == live_after_evaluation
+                && !evidence.sandbox_identity.is_empty()
+        });
         let mut promoted = false;
 
         if let StepOutcome::Evaluated {
@@ -354,7 +412,20 @@ impl<P: Proposer, E: Evaluator> GuardedDgm<P, E> {
                 // Re-check the allowlist before the live-tree mutation (defence
                 // in depth: the proposer already refused non-allowlisted targets,
                 // but a promote path must never bypass it).
-                if self.sandbox.is_editable(&patch.target) && !patch.is_noop() {
+                if !evidence_valid {
+                    audit.append(
+                        EventType::AgentAction,
+                        EventPayload::Custom {
+                            key: "rsi_dgm_promote_blocked_attestation".to_string(),
+                            value: format!(
+                                "target={};live_unchanged={};evidence_present={}",
+                                patch.target,
+                                live_before == live_after_evaluation,
+                                evidence.is_some()
+                            ),
+                        },
+                    );
+                } else if self.sandbox.is_editable(&patch.target) && !patch.is_noop() {
                     let backup_dir = self.sandbox.backup_dir_or(&live_root);
                     match promote_to_live(&live_root, patch, &backup_dir) {
                         Ok(backup_id) => {
@@ -365,7 +436,17 @@ impl<P: Proposer, E: Evaluator> GuardedDgm<P, E> {
                                 EventType::GraphMutation,
                                 EventPayload::GraphMutation {
                                     node_id: variant_id.clone(),
-                                    operation: format!("rsi_dgm_promote:{backup_id}"),
+                                    operation: format!(
+                                        "rsi_dgm_promote:{backup_id}:eval_source={}:sandbox={}",
+                                        evidence
+                                            .as_ref()
+                                            .map(|proof| proof.source_before.as_str())
+                                            .unwrap_or("missing"),
+                                        evidence
+                                            .as_ref()
+                                            .map(|proof| proof.sandbox_identity.as_str())
+                                            .unwrap_or("missing")
+                                    ),
                                     nodes_before: 0,
                                     nodes_after: 1,
                                     edges_before: 0,
@@ -494,6 +575,20 @@ impl<P: Proposer, E: Evaluator> GuardedDgm<P, E> {
 
 // ── Air-gapped cargo evaluator ──────────────────────────────────────────────
 
+/// Evidence consumed exactly once before a candidate may reach the live tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvaluationAttestation {
+    pub source_before: String,
+    pub source_after: String,
+    pub sandbox_identity: String,
+}
+
+/// Only evaluators that produce evidence of completed isolation can be wired
+/// to the promotion-capable DGM wrapper.
+pub trait PromotionEvaluator: Evaluator {
+    fn take_attestation(&self) -> Option<EvaluationAttestation>;
+}
+
 /// An [`Evaluator`] that runs `cargo build --offline --frozen --quiet` then
 /// `cargo test --offline --quiet [test_args]` in the isolated snapshot, with
 /// `CARGO_NET_OFFLINE=true` set so the air-gap posture holds (no registry fetch,
@@ -507,6 +602,10 @@ pub struct GuardedCargoEvaluator {
     pub test_args: Vec<String>,
     pub timeout: std::time::Duration,
     pub max_output: u64,
+    pub memory_limit: u64,
+    pub process_limit: u64,
+    pub file_size_limit: u64,
+    attestation: std::sync::Mutex<Option<EvaluationAttestation>>,
 }
 
 impl Default for GuardedCargoEvaluator {
@@ -516,35 +615,81 @@ impl Default for GuardedCargoEvaluator {
             test_args: Vec::new(),
             timeout: std::time::Duration::from_secs(300),
             max_output: 4 * 1024 * 1024,
+            memory_limit: 2 * 1024 * 1024 * 1024,
+            process_limit: 128,
+            file_size_limit: 256 * 1024 * 1024,
+            attestation: std::sync::Mutex::new(None),
         }
+    }
+}
+
+impl PromotionEvaluator for GuardedCargoEvaluator {
+    fn take_attestation(&self) -> Option<EvaluationAttestation> {
+        self.attestation.lock().ok()?.take()
     }
 }
 
 impl Evaluator for GuardedCargoEvaluator {
     fn evaluate(&self, workspace: &Path) -> rsi::dgm::Result<Fitness> {
-        let cwd = workspace.join(&self.package_subdir);
-        // Build: --offline --frozen ⇒ no registry fetch, no network egress.
-        let mut build = std::process::Command::new("cargo");
-        build
-            .args(["build", "--offline", "--frozen", "--quiet"])
-            .current_dir(&cwd)
-            .env("CARGO_NET_OFFLINE", "true")
-            .stdin(std::process::Stdio::null());
-        let (build_ok, _build_out) = run_bounded(build, self.timeout, self.max_output)?;
+        if let Ok(mut attestation) = self.attestation.lock() {
+            *attestation = None;
+        }
+        let workspace = workspace
+            .canonicalize()
+            .map_err(|error| rsi::dgm::DgmError::Evaluation(format!("snapshot root: {error}")))?;
+        let cwd = workspace
+            .join(&self.package_subdir)
+            .canonicalize()
+            .map_err(|error| {
+                rsi::dgm::DgmError::Evaluation(format!("package directory: {error}"))
+            })?;
+        if !cwd.starts_with(&workspace) || !cwd.is_dir() {
+            return Err(rsi::dgm::DgmError::PathNotAllowed(
+                self.package_subdir.display().to_string(),
+            ));
+        }
+        let source_before = source_tree_digest(&workspace)?;
+        let (mut build, sandbox_identity) = self.sandbox_command(
+            &workspace,
+            &cwd,
+            &["build", "--offline", "--frozen", "--quiet"],
+        )?;
+        let (build_ok, build_out) = run_bounded(&mut build, self.timeout, self.max_output)?;
         if !build_ok {
-            return Ok(Fitness::broken("cargo build failed (offline/frozen)"));
+            return Ok(Fitness::broken(format!(
+                "sandboxed cargo build failed: {}",
+                output_tail(&build_out, 1500)
+            )));
         }
 
-        // Test: --offline --frozen ⇒ air-gapped test run.
-        let mut test = std::process::Command::new("cargo");
-        test.args(["test", "--offline", "--frozen", "--quiet"])
-            .args(&self.test_args)
-            .current_dir(&cwd)
-            .env("CARGO_NET_OFFLINE", "true")
-            .stdin(std::process::Stdio::null());
-        let (test_ok, test_out) = run_bounded(test, self.timeout, self.max_output)?;
+        let mut test_args = vec!["test", "--offline", "--frozen", "--quiet"];
+        test_args.extend(self.test_args.iter().map(String::as_str));
+        let (mut test, test_sandbox_identity) =
+            self.sandbox_command(&workspace, &cwd, &test_args)?;
+        if test_sandbox_identity != sandbox_identity {
+            return Err(rsi::dgm::DgmError::Evaluation(
+                "sandbox executable identity changed during evaluation".into(),
+            ));
+        }
+        let (test_ok, test_out) = run_bounded(&mut test, self.timeout, self.max_output)?;
         let (passed, failed) = parse_test_counts(&test_out);
         let compiles = build_ok && test_ok;
+        let source_after = source_tree_digest(&workspace)?;
+        if source_before != source_after {
+            return Ok(Fitness::broken(
+                "sandbox evaluation modified source files outside the candidate patch",
+            ));
+        }
+        if compiles && failed == 0 {
+            let evidence = EvaluationAttestation {
+                source_before,
+                source_after,
+                sandbox_identity,
+            };
+            *self.attestation.lock().map_err(|_| {
+                rsi::dgm::DgmError::Evaluation("evaluation attestation lock poisoned".into())
+            })? = Some(evidence);
+        }
         Ok(Fitness {
             compiles,
             tests_passed: passed,
@@ -557,9 +702,147 @@ impl Evaluator for GuardedCargoEvaluator {
             notes: if test_ok {
                 String::new()
             } else {
-                "cargo test failed (offline/frozen)".to_string()
+                format!(
+                    "cargo test failed (offline/frozen): {}",
+                    output_tail(&test_out, 1500)
+                )
             },
         })
+    }
+}
+
+impl GuardedCargoEvaluator {
+    fn sandbox_command(
+        &self,
+        workspace: &Path,
+        cwd: &Path,
+        cargo_args: &[&str],
+    ) -> rsi::dgm::Result<(std::process::Command, String)> {
+        const BWRAP: &str = "/usr/bin/bwrap";
+        const PRLIMIT: &str = "/usr/bin/prlimit";
+        const CARGO: &str = "/root/.cargo/bin/cargo";
+        let bwrap_hash = trusted_executable_identity(Path::new(BWRAP))?;
+        let prlimit_hash = trusted_executable_identity(Path::new(PRLIMIT))?;
+        let cargo_hash = trusted_executable_identity(Path::new(CARGO))?;
+        let relative_cwd = cwd
+            .strip_prefix(workspace)
+            .map_err(|_| rsi::dgm::DgmError::PathNotAllowed(cwd.display().to_string()))?;
+        let sandbox_cwd = Path::new("/workspace").join(relative_cwd);
+        let cpu_seconds = self.timeout.as_secs().max(1).saturating_add(1);
+
+        let mut command = std::process::Command::new(BWRAP);
+        command
+            .env_clear()
+            .args([
+                "--die-with-parent",
+                "--new-session",
+                "--unshare-all",
+                "--unshare-user",
+                "--disable-userns",
+                "--clearenv",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--ro-bind-try",
+                "/lib",
+                "/lib",
+                "--ro-bind-try",
+                "/lib64",
+                "/lib64",
+                "--ro-bind-try",
+                "/bin",
+                "/bin",
+                "--dir",
+                "/etc",
+                "--ro-bind-try",
+                "/etc/ssl",
+                "/etc/ssl",
+                "--ro-bind-try",
+                "/etc/alternatives",
+                "/etc/alternatives",
+                "--ro-bind-try",
+                "/usr/lib/gcc",
+                "/usr/lib/gcc",
+                "--ro-bind-try",
+                "/usr/lib/aarch64-linux-gnu",
+                "/usr/lib/aarch64-linux-gnu",
+                "--tmpfs",
+                "/cargo",
+                "--ro-bind",
+                "/root/.cargo/bin",
+                "/cargo/bin",
+                "--ro-bind-try",
+                "/root/.cargo/registry",
+                "/cargo/registry",
+                "--ro-bind-try",
+                "/root/.cargo/git",
+                "/cargo/git",
+                "--dir",
+                "/rustup",
+                "--ro-bind",
+                "/root/.rustup",
+                "/rustup",
+                "--size",
+                "134217728",
+                "--tmpfs",
+                "/tmp",
+                "--dir",
+                "/home",
+                "--dir",
+                "/home/ccos",
+                "--dir",
+                "/workspace",
+                "--remount-ro",
+                "/",
+                "--bind",
+            ])
+            .arg(workspace)
+            .arg("/workspace")
+            .args(["--chdir"])
+            .arg(&sandbox_cwd)
+            .args([
+                "--setenv",
+                "HOME",
+                "/home/ccos",
+                "--setenv",
+                "TMPDIR",
+                "/tmp",
+                "--setenv",
+                "PATH",
+                "/cargo/bin:/usr/bin:/bin",
+                "--setenv",
+                "CARGO_HOME",
+                "/cargo",
+                "--setenv",
+                "RUSTUP_HOME",
+                "/rustup",
+                "--setenv",
+                "CARGO_NET_OFFLINE",
+                "true",
+                "--setenv",
+                "CARGO_TARGET_DIR",
+                "/workspace/target",
+                "--",
+                PRLIMIT,
+            ])
+            .arg(format!("--cpu={cpu_seconds}"))
+            .arg(format!("--as={}", self.memory_limit))
+            .arg(format!("--nproc={}", self.process_limit))
+            .arg(format!("--fsize={}", self.file_size_limit))
+            .arg("--nofile=256")
+            .arg("--")
+            .arg("/cargo/bin/cargo")
+            .args(cargo_args)
+            .current_dir(workspace)
+            .stdin(std::process::Stdio::null());
+        Ok((
+            command,
+            format!("bwrap:{bwrap_hash};prlimit:{prlimit_hash};cargo:{cargo_hash}"),
+        ))
     }
 }
 
@@ -568,52 +851,73 @@ impl Evaluator for GuardedCargoEvaluator {
 /// timeout or non-zero exit. No CPU/RSS cap (the snapshot isolation + time/output
 /// bounds are the controls here; a stronger jail is a host concern).
 fn run_bounded(
-    mut cmd: std::process::Command,
+    cmd: &mut std::process::Command,
     timeout: std::time::Duration,
     max_output: u64,
 ) -> rsi::dgm::Result<(bool, String)> {
     use std::io::Read;
+    use std::os::unix::process::CommandExt as _;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     let per_stream = (max_output / 2).max(1) as usize;
+    cmd.process_group(0);
     let mut child = cmd
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| rsi::dgm::DgmError::Io(e.to_string()))?;
     let deadline = std::time::Instant::now() + timeout;
-    let mut stdout = child.stdout.take().unwrap();
-    let mut stderr = child.stderr.take().unwrap();
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| rsi::dgm::DgmError::Io("sandbox stdout was not piped".into()))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| rsi::dgm::DgmError::Io("sandbox stderr was not piped".into()))?;
+    let overflow = Arc::new(AtomicBool::new(false));
+    let out_overflow = Arc::clone(&overflow);
     let out_h = std::thread::spawn(move || {
-        let mut s = String::new();
+        let mut bytes = Vec::new();
         let _ = stdout
             .by_ref()
-            .take(per_stream as u64)
-            .read_to_string(&mut s);
-        s
+            .take(per_stream as u64 + 1)
+            .read_to_end(&mut bytes);
+        if bytes.len() > per_stream {
+            out_overflow.store(true, Ordering::Release);
+            bytes.truncate(per_stream);
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
     });
+    let err_overflow = Arc::clone(&overflow);
     let err_h = std::thread::spawn(move || {
-        let mut s = String::new();
+        let mut bytes = Vec::new();
         let _ = stderr
             .by_ref()
-            .take(per_stream as u64)
-            .read_to_string(&mut s);
-        s
+            .take(per_stream as u64 + 1)
+            .read_to_end(&mut bytes);
+        if bytes.len() > per_stream {
+            err_overflow.store(true, Ordering::Release);
+            bytes.truncate(per_stream);
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
     });
+    let mut success = false;
     loop {
         match child
             .try_wait()
             .map_err(|e| rsi::dgm::DgmError::Io(e.to_string()))?
         {
             Some(status) => {
-                let out = out_h.join().unwrap_or_default();
-                let err = err_h.join().unwrap_or_default();
-                let combined = format!("{out}\n{err}");
-                return Ok((status.success(), combined));
+                success = status.success();
+                break;
             }
             None => {
-                if std::time::Instant::now() > deadline {
+                if std::time::Instant::now() > deadline || overflow.load(Ordering::Acquire) {
+                    kill_process_group(child.id());
                     let _ = child.kill();
                     let _ = child.wait();
-                    break; // timed out ⇒ fall through to the not-success return
+                    break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(25));
             }
@@ -621,8 +925,144 @@ fn run_bounded(
     }
     let out = out_h.join().unwrap_or_default();
     let err = err_h.join().unwrap_or_default();
-    // Reached only via the deadline break ⇒ the run timed out (not a success).
-    Ok((false, format!("{out}\n{err}")))
+    let suffix = if overflow.load(Ordering::Acquire) {
+        "\n[ccos sandbox: output limit exceeded]"
+    } else if !success && std::time::Instant::now() > deadline {
+        "\n[ccos sandbox: timeout exceeded]"
+    } else {
+        ""
+    };
+    Ok((
+        success && !overflow.load(Ordering::Acquire),
+        format!("{out}\n{err}{suffix}"),
+    ))
+}
+
+fn kill_process_group(pid: u32) {
+    let mut kill = std::process::Command::new("/bin/kill");
+    kill.env_clear()
+        .args(["-KILL", &format!("-{pid}")])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let _ = kill.status();
+}
+
+fn output_tail(output: &str, max: usize) -> &str {
+    if output.len() <= max {
+        output
+    } else {
+        let start = (output.len() - max..output.len())
+            .find(|index| output.is_char_boundary(*index))
+            .unwrap_or(output.len());
+        &output[start..]
+    }
+}
+
+fn trusted_executable_identity(path: &Path) -> rsi::dgm::Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read as _;
+    use std::os::unix::fs::MetadataExt as _;
+    let canonical = path.canonicalize().map_err(|error| {
+        rsi::dgm::DgmError::Evaluation(format!(
+            "required sandbox executable {} is unavailable: {error}",
+            path.display()
+        ))
+    })?;
+    let metadata = canonical.metadata().map_err(|error| {
+        rsi::dgm::DgmError::Evaluation(format!("inspect {}: {error}", canonical.display()))
+    })?;
+    if !metadata.is_file() || metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
+        return Err(rsi::dgm::DgmError::Evaluation(format!(
+            "sandbox executable {} is not a root-owned, non-writable regular file",
+            canonical.display()
+        )));
+    }
+    let mut file = std::fs::File::open(&canonical)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(format!("{}:{:x}", canonical.display(), hasher.finalize()))
+}
+
+fn source_tree_digest(root: &Path) -> rsi::dgm::Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    let mut total = 0u64;
+    hash_source_directory(root, root, &mut hasher, &mut total)?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn hash_source_directory(
+    root: &Path,
+    directory: &Path,
+    hasher: &mut sha2::Sha256,
+    total: &mut u64,
+) -> rsi::dgm::Result<()> {
+    use sha2::Digest as _;
+    use std::io::Read as _;
+    let mut entries: Vec<_> = std::fs::read_dir(directory)?.collect::<Result<_, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| rsi::dgm::DgmError::PathNotAllowed(path.display().to_string()))?;
+        let first = relative
+            .components()
+            .next()
+            .and_then(|component| match component {
+                std::path::Component::Normal(name) => name.to_str(),
+                _ => None,
+            });
+        if matches!(first, Some("target" | ".git" | ".rsi_backups")) {
+            continue;
+        }
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() {
+            return Err(rsi::dgm::DgmError::PathNotAllowed(
+                relative.display().to_string(),
+            ));
+        }
+        let relative = relative
+            .to_str()
+            .ok_or_else(|| rsi::dgm::DgmError::PathNotAllowed("non-UTF-8 source path".into()))?;
+        hasher.update((relative.len() as u64).to_be_bytes());
+        hasher.update(relative.as_bytes());
+        if metadata.is_dir() {
+            hasher.update(b"dir");
+            hash_source_directory(root, &path, hasher, total)?;
+        } else if metadata.is_file() {
+            hasher.update(b"file");
+            *total = total.checked_add(metadata.len()).ok_or_else(|| {
+                rsi::dgm::DgmError::Evaluation("source tree size overflow".into())
+            })?;
+            if *total > 1024 * 1024 * 1024 {
+                return Err(rsi::dgm::DgmError::Evaluation(
+                    "source tree exceeds 1 GiB evaluation limit".into(),
+                ));
+            }
+            hasher.update(metadata.len().to_be_bytes());
+            let mut file = std::fs::File::open(&path)?;
+            let mut buffer = [0u8; 64 * 1024];
+            loop {
+                let count = file.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..count]);
+            }
+        } else {
+            return Err(rsi::dgm::DgmError::PathNotAllowed(relative.into()));
+        }
+    }
+    Ok(())
 }
 
 /// Sum the `N passed` / `N failed` counters of every `test result:` line in a
@@ -656,6 +1096,19 @@ mod tests {
     use crate::guard::GuardConfig;
     use crate::license::License;
     use rsi::dgm::{ClosureEvaluator, DgmError, Patch};
+
+    impl<F> PromotionEvaluator for ClosureEvaluator<F>
+    where
+        F: Fn(&Path) -> Fitness,
+    {
+        fn take_attestation(&self) -> Option<EvaluationAttestation> {
+            Some(EvaluationAttestation {
+                source_before: "test-source".into(),
+                source_after: "test-source".into(),
+                sandbox_identity: "test-only-closure".into(),
+            })
+        }
+    }
 
     const NOW: u64 = 1_000;
 
@@ -777,6 +1230,7 @@ mod tests {
         let config = DgmConfig::new(live, "improve old fn");
         let sandbox = GuardedDgmConfig {
             editable_allowlist: vec!["src/lib.rs".to_string()],
+            high_risk_allowlist: vec![],
             backup_dir: None,
         };
         let guard = GuardLayer::new(GuardConfig::default());
@@ -824,6 +1278,7 @@ mod tests {
         let config = DgmConfig::new(live, "should not edit secret");
         let sandbox = GuardedDgmConfig {
             editable_allowlist: vec!["src/lib.rs".to_string()], // secret.rs NOT allowed
+            high_risk_allowlist: vec![],
             backup_dir: None,
         };
         let guard = GuardLayer::new(GuardConfig::default());
@@ -842,6 +1297,118 @@ mod tests {
         let secret = std::fs::read_to_string(live.join("src/secret.rs")).unwrap();
         assert!(secret.contains("secret"));
         assert!(!secret.contains("leaked"));
+    }
+
+    #[test]
+    fn sandbox_policy_rejects_traversal_and_requires_high_risk_consent() {
+        let config = GuardedDgmConfig {
+            editable_allowlist: vec!["src/lib.rs".into(), "Cargo.toml".into()],
+            high_risk_allowlist: vec![],
+            backup_dir: None,
+        };
+        assert!(config.is_editable("src/lib.rs"));
+        assert!(!config.is_editable("../Cargo.toml"));
+        assert!(!config.is_editable("/tmp/escape"));
+        assert!(!config.is_editable("Cargo.toml"));
+        let config = GuardedDgmConfig {
+            high_risk_allowlist: vec!["Cargo.toml".into()],
+            ..config
+        };
+        assert!(config.is_editable("Cargo.toml"));
+    }
+
+    #[test]
+    fn sandbox_prerequisites_fail_closed_when_executable_is_missing() {
+        let error = trusted_executable_identity(Path::new("/definitely-missing/ccos-bubblewrap"))
+            .unwrap_err();
+        assert!(error.to_string().contains("sandbox executable"));
+    }
+
+    #[test]
+    fn bounded_runner_kills_timeout_and_output_excess() {
+        let mut timeout = std::process::Command::new("/bin/sh");
+        timeout.args(["-c", "sleep 2"]);
+        let (ok, output) =
+            run_bounded(&mut timeout, std::time::Duration::from_millis(50), 1024).unwrap();
+        assert!(!ok);
+        assert!(output.contains("timeout") || output.is_empty());
+
+        let mut output_cmd = std::process::Command::new("/usr/bin/yes");
+        let (ok, output) =
+            run_bounded(&mut output_cmd, std::time::Duration::from_secs(2), 1024).unwrap();
+        assert!(!ok);
+        assert!(output.contains("output limit"));
+    }
+
+    #[test]
+    fn bubblewrap_evaluator_is_real_and_attests_only_green_source() {
+        let probe = std::process::Command::new("/usr/bin/bwrap")
+            .args([
+                "--die-with-parent",
+                "--new-session",
+                "--unshare-all",
+                "--unshare-user",
+                "--disable-userns",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--ro-bind-try",
+                "/lib",
+                "/lib",
+                "--ro-bind-try",
+                "/lib64",
+                "/lib64",
+                "--ro-bind-try",
+                "/bin",
+                "/bin",
+                "--tmpfs",
+                "/tmp",
+                "--remount-ro",
+                "/",
+                "--",
+                "/bin/true",
+            ])
+            .status();
+        let Ok(status) = probe else {
+            return;
+        };
+        if !status.success() {
+            eprintln!("skipping Bubblewrap integration test: namespaces unavailable");
+            return;
+        }
+        let tmp = tempdir();
+        let root = tmp.path();
+        write_workspace(
+            root,
+            "Cargo.toml",
+            "[package]\nname = \"sandbox-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write_workspace(
+            root,
+            "Cargo.lock",
+            "version = 4\n\n[[package]]\nname = \"sandbox-fixture\"\nversion = \"0.1.0\"\n",
+        );
+        write_workspace(root, "src/lib.rs", "pub fn answer() -> u32 { 42 }\n");
+        let evaluator = GuardedCargoEvaluator::default();
+        let fitness = evaluator.evaluate(root).unwrap();
+        assert!(fitness.compiles, "sandbox build failed: {fitness:?}");
+        assert_eq!(fitness.tests_failed, 0, "sandbox tests failed: {fitness:?}");
+        let attestation = evaluator.take_attestation().expect("green attestation");
+        assert_eq!(attestation.source_before, attestation.source_after);
+        assert!(attestation.sandbox_identity.contains("bwrap:"));
+
+        write_workspace(
+            root,
+            "src/lib.rs",
+            "#[test]\nfn broken() { assert_eq!(1, 2); }\n",
+        );
+        let failed = evaluator.evaluate(root).unwrap();
+        assert!(!failed.compiles || failed.tests_failed > 0);
+        assert!(evaluator.take_attestation().is_none());
     }
 
     // Minimal temp dir helper (avoids pulling in a tempfile dep just for tests).

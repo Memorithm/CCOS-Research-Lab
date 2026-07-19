@@ -14,7 +14,7 @@
 //! at claim time, so this CLI can run anywhere the vault file lives.
 
 use ccos_license_server::{Entry, Status, Vault};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 
 fn main() {
@@ -151,7 +151,7 @@ fn usage(msg: &str) -> ! {
 }
 
 /// Load the vault, or start a fresh one for `new` when the file is absent.
-fn load_or_new(path: &PathBuf, create: bool) -> Vault {
+fn load_or_new(path: &Path, create: bool) -> Vault {
     match Vault::load(path) {
         Ok(v) => v,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && create => Vault::new(),
@@ -162,14 +162,14 @@ fn load_or_new(path: &PathBuf, create: bool) -> Vault {
     }
 }
 
-fn save_or_die(vault: &Vault, path: &PathBuf) {
+fn save_or_die(vault: &Vault, path: &Path) {
     if let Err(e) = vault.save(path) {
         eprintln!("error: cannot save vault {}: {e}", path.display());
         exit(1)
     }
 }
 
-fn cmd_new(vault_path: &PathBuf, args: &[String]) {
+fn cmd_new(vault_path: &Path, args: &[String]) {
     let mut licensee: Option<String> = None;
     let mut days: Option<u64> = None;
     let mut label: Option<String> = None;
@@ -231,7 +231,7 @@ fn cmd_new(vault_path: &PathBuf, args: &[String]) {
     println!("    ccos license claim {code} --from https://licensing.memorithm.fr");
 }
 
-fn cmd_list(vault_path: &PathBuf) {
+fn cmd_list(vault_path: &Path) {
     let vault = load_or_new(vault_path, false);
     if vault.entries.is_empty() {
         println!("vault {} is empty", vault_path.display());
@@ -263,7 +263,7 @@ enum Flip {
     Revoke,
 }
 
-fn cmd_flip(vault_path: &PathBuf, code_or_hash: Option<&String>, flip: Flip) {
+fn cmd_flip(vault_path: &Path, code_or_hash: Option<&String>, flip: Flip) {
     let Some(input) = code_or_hash else {
         usage("expected a claim CODE or its 64-hex code-hash");
     };
