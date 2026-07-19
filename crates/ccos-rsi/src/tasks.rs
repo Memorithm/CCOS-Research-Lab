@@ -19,9 +19,9 @@ use crate::surface::{CapabilityModel, CeilingModel, IntelligenceSurface, PowerCe
 #[derive(Clone, Debug)]
 pub struct Task {
     pub name: String,
-    /// exigences sur (D, M, R, A, C, V) ∈ [0,1].
+    /// exigences sur (D, M, R, A, C, V) ∈ `[0,1]`.
     pub requirements: [f64; 6],
-    /// difficulté ∈ [0,1] (échelle les exigences et le plafond physique).
+    /// difficulté ∈ `[0,1]` (échelle les exigences et le plafond physique).
     pub difficulty: f64,
     /// importance dans μ (poids).
     pub weight: f64,

@@ -133,7 +133,7 @@ impl Json {
     /// Parse une chaîne JSON.
     ///
     /// Sécurité : rejette les entrées dont l'imbrication dépasse
-    /// [`MAX_DEPTH`], ce qui évite tout dépassement de pile sur une entrée
+    /// la profondeur maximale configurée, ce qui évite tout dépassement de pile sur une entrée
     /// hostile (le parseur est récursif et traite des données non fiables
     /// côté serveur MCP).
     pub fn parse(input: &str) -> Result<Json, String> {

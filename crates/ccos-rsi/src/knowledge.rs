@@ -3,7 +3,7 @@
 //! La composante `D` (connaissances) n'est plus une abstraction : le port
 //! [`KnowledgeSource`] l'alimente depuis une **vraie source** (documents). À
 //! chaque absorption, la source ingère du contenu réel, en extrait des
-//! *concepts* distincts, et renvoie un **niveau de connaissance** ∈ [0,1]
+//! *concepts* distincts, et renvoie un **niveau de connaissance** ∈ `[0,1]`
 //! (saturant) vers lequel l'agent fait tendre `D`.
 //!
 //! [`CorpusKnowledge`] lit des textes en mémoire ou un répertoire de fichiers.
@@ -13,7 +13,7 @@
 use std::collections::HashSet;
 
 /// Source de connaissances : chaque `absorb` ingère un lot et renvoie le niveau
-/// cumulé de connaissance ∈ [0,1] (monotone croissant).
+/// cumulé de connaissance ∈ `[0,1]` (monotone croissant).
 pub trait KnowledgeSource {
     fn absorb(&mut self) -> f64;
     /// Niveau courant sans nouvelle ingestion.

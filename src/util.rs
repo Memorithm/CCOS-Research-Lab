@@ -63,8 +63,6 @@ pub fn write_durable(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)?;
-            #[cfg(unix)]
-            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
         }
     }
     let mut tmp = path.as_os_str().to_os_string();
