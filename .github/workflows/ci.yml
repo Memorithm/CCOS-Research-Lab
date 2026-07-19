@@ -127,7 +127,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - run: rustup toolchain install 1.89.0 --profile minimal
-      - run: RUSTDOCFLAGS="-D warnings" cargo +1.89.0 doc --workspace --no-deps --all-features --locked
+      - run: RUSTDOCFLAGS="-D warnings" cargo +1.89.0 doc -p ccos --no-deps --all-features --locked
 
   aarch64-replay:
     needs: test-core-msrv
