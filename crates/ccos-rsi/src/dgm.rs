@@ -98,12 +98,10 @@ use crate::json::Json;
 use crate::rng::Rng;
 use crate::sha256::sha256_hex;
 use std::fmt;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 // ════════════════════════════════ Erreurs ════════════════════════════════ //
 
@@ -1081,71 +1079,44 @@ fn parse_bench_score(output: &str) -> Option<f64> {
 /// fusionnés). Rend `(success, output)`. Un dépassement de délai ⇒ kill et
 /// `success = false`. std-only (sondage `try_wait`, lecture en threads).
 fn run_bounded(
-    mut cmd: Command,
+    cmd: Command,
     timeout: Duration,
     max_output: u64,
 ) -> std::io::Result<(bool, String)> {
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = cmd.spawn()?;
-    let per_stream = (max_output / 2).max(1);
-
-    let mut stdout = child.stdout.take();
-    let mut stderr = child.stderr.take();
-    let (tx_o, rx_o) = mpsc::channel();
-    let (tx_e, rx_e) = mpsc::channel();
-    if let Some(o) = stdout.take() {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = o.take(per_stream).read_to_end(&mut buf);
-            let _ = tx_o.send(buf);
-        });
-    } else {
-        let _ = tx_o.send(Vec::new());
-    }
-    if let Some(e) = stderr.take() {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = e.take(per_stream).read_to_end(&mut buf);
-            let _ = tx_e.send(buf);
-        });
-    } else {
-        let _ = tx_e.send(Vec::new());
-    }
-
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break Some(s),
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    break None; // timeout
-                }
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-        }
+    let cwd = cmd
+        .get_current_dir()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| "/".into()));
+    let env = cmd
+        .get_envs()
+        .filter_map(|(k, v)| v.map(|v| (k.to_os_string(), v.to_os_string())))
+        .collect();
+    let spec = ccos_sandbox::SandboxSpec {
+        program: cmd.get_program().to_os_string().into(),
+        args: cmd.get_args().map(|a| a.to_os_string()).collect(),
+        cwd: cwd.clone(),
+        writable_paths: vec![cwd],
+        environment: env,
+        timeout,
+        termination_grace: Duration::from_millis(250),
+        max_output_bytes: max_output,
+        max_memory_bytes: None,
+        max_file_size_bytes: None,
+        max_processes: None,
+        cpu_time_limit: Some(timeout),
+        network: ccos_sandbox::NetworkPolicy::Deny,
     };
-
-    let ob = rx_o
-        .recv_timeout(Duration::from_secs(2))
-        .unwrap_or_default();
-    let eb = rx_e
-        .recv_timeout(Duration::from_secs(2))
-        .unwrap_or_default();
-    let combined = format!(
+    let out = ccos_sandbox::run(&spec)
+        .map_err(|e| std::io::Error::other(format!("sandbox refused: {e}")))?;
+    let text = format!(
         "{}{}",
-        String::from_utf8_lossy(&ob),
-        String::from_utf8_lossy(&eb)
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
     );
-    Ok((status.map(|s| s.success()).unwrap_or(false), combined))
+    Ok((
+        out.status == ccos_sandbox::SandboxExit::Success && !out.timed_out && !out.output_truncated,
+        text,
+    ))
 }
 
 /// Somme les lignes `test result: ok. N passed; M failed` que `cargo` émet par

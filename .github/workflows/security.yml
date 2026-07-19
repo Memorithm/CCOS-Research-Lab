@@ -17,6 +17,16 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  sandbox-security:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Require Bubblewrap
+        run: command -v bwrap
+      - name: Test fail-closed sandbox
+        run: cargo +1.89.0 test -p ccos-sandbox --locked
   miri:
     runs-on: ubuntu-24.04
     steps:

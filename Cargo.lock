@@ -239,6 +239,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ccos-sandbox"
+version = "0.1.0"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -754,6 +758,7 @@ name = "forge-core"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "ccos-sandbox",
  "rand 0.8.6",
  "rayon",
  "rlimit",
@@ -2321,6 +2326,7 @@ dependencies = [
 name = "rsi"
 version = "0.10.0"
 dependencies = [
+ "ccos-sandbox",
  "forge-core",
  "octasoma",
  "rand 0.8.6",

@@ -64,6 +64,7 @@ observability = ["dep:tracing"]
 simd = ["dep:wide"]
 
 [dependencies]
+ccos-sandbox = { path = "../ccos-sandbox" }
 forge-core = { path = "../forge/forge-core", optional = true }
 # CCOS_EXTENDED: repointed from the git dep to the vendored workspace member
 # (`crates/ccos-octasoma`) — air-gap: no network fetch. Same package name `octasoma`,

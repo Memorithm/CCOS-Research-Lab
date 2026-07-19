@@ -5,6 +5,7 @@ edition = "2021"
 description = "Moteur de recherche evolutionnaire d'algorithmes pilote par execution. Terrain d'execution: scirust."
 
 [dependencies]
+ccos-sandbox = { path = "../../ccos-sandbox" }
 rand = "0.8"
 rayon = "1.10"
 serde = { version = "1", features = ["derive"] }
