@@ -32,8 +32,6 @@
 //! Pro session that mixes full-kernel pages into a replay log must opt into the
 //! relax explicitly — the distilled backend remains the replay-exact store.
 
-#![cfg(feature = "slhav2-full")]
-
 use crate::license::{Feature, LicenseError, Licensing};
 
 /// Premium construction token for the SLHAv2 full-kernel tier. Only

@@ -49,8 +49,6 @@
 //!   loop are single-threaded; the type is deliberately `!Sync` so misuse fails
 //!   at compile time rather than racing.
 
-#![cfg(feature = "octasoma")]
-
 use crate::util::sha256_hex;
 use octasoma::{EmbedError, Embedder};
 use std::cell::{Cell, RefCell};

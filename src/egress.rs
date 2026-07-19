@@ -160,9 +160,7 @@ impl EgressAllowlist {
     }
 
     fn allow_entry(&mut self, entry: &str) {
-        let candidate = if entry.starts_with('[') {
-            format!("http://{entry}")
-        } else if entry.matches(':').count() <= 1 {
+        let candidate = if entry.starts_with('[') || entry.matches(':').count() <= 1 {
             format!("http://{entry}")
         } else {
             return;

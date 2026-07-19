@@ -46,8 +46,6 @@
 //!   relax, visible in the type and never the default. The default CCOS build
 //!   compiles none of this (`rsi` feature off).
 
-#![cfg(feature = "rsi")]
-
 use std::path::{Path, PathBuf};
 
 use crate::event_log::{EventLog, EventPayload, EventType};
