@@ -3,6 +3,7 @@
 //! declare `pub mod` dans lib.rs, puis `cargo test` (porte CI). Test optionnel via ELITE_TEST_FILE.
 use std::path::Path;
 use std::process::Command;
+use forge_core::isolation::run_with_timeout;
 
 fn env_or(k: &str, d: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| d.to_string())
@@ -87,9 +88,10 @@ fn main() {
     }
 
     println!("--- cargo test --release dans {target} (porte CI) ---");
-    match Command::new("cargo").args(["test", "--release"]).current_dir(&target).status() {
-        Ok(s) if s.success() => println!(">>> INJECTION OK : {module}.rs integre et teste vert"),
-        Ok(s) => { eprintln!(">>> ECHEC : cargo test code {:?} (module ecrit ; `git checkout .` dans la cible pour annuler)", s.code()); std::process::exit(1); }
-        Err(e) => { eprintln!(">>> impossible de lancer cargo : {e}"); std::process::exit(1); }
+    let mut test_cmd = Command::new("cargo");
+    test_cmd.args(["test", "--release", "--offline", "--frozen", "--locked"]).current_dir(&target);
+    match run_with_timeout(test_cmd, std::time::Duration::from_secs(300)) {
+        Ok(_) => println!(">>> INJECTION OK : {module}.rs integre et teste vert"),
+        Err(e) => { eprintln!(">>> ECHEC : sandbox cargo test: {e}"); std::process::exit(1); }
     }
 }
