@@ -714,6 +714,7 @@ impl WorkspaceSnapshot {
         if patch.is_noop() {
             return Err(DgmError::Apply("patch is a no-op".to_string()));
         }
+        validate_relative_target(&patch.target)?;
         let target = self.resolve(&patch.target);
         // Empêche l'évasion hors de la racine (`..`, chemins absolus…).
         let canon_root = self
@@ -743,8 +744,37 @@ pub fn promote_to_live(live_root: &Path, patch: &Patch, backup_dir: &Path) -> Re
     if patch.is_noop() {
         return Err(DgmError::Apply("patch is a no-op".to_string()));
     }
+    validate_relative_target(&patch.target)?;
+    let canonical_root = live_root
+        .canonicalize()
+        .map_err(|error| DgmError::Apply(format!("canonicalize live root: {error}")))?;
     let target = live_root.join(&patch.target);
+    let metadata = std::fs::symlink_metadata(&target)
+        .map_err(|error| DgmError::Apply(format!("inspect patch target: {error}")))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(DgmError::PathNotAllowed(patch.target.clone()));
+    }
+    let canonical_target = target
+        .canonicalize()
+        .map_err(|error| DgmError::Apply(format!("canonicalize patch target: {error}")))?;
+    if !canonical_target.starts_with(&canonical_root) {
+        return Err(DgmError::PathNotAllowed(patch.target.clone()));
+    }
     patch_file_with_backup(&target, &patch.find, &patch.replace, backup_dir)
+}
+
+fn validate_relative_target(target: &str) -> Result<()> {
+    use std::path::Component;
+    let path = Path::new(target);
+    if target.is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(DgmError::PathNotAllowed(target.to_string()));
+    }
+    Ok(())
 }
 
 /// Substitution exacte `find → replace` avec sauvegarde de l'original.
@@ -877,8 +907,9 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
             copy_tree(&entry.path(), &to)?;
         } else if ty.is_file() {
             std::fs::copy(entry.path(), &to)?;
+        } else {
+            return Err(DgmError::PathNotAllowed(entry.path().display().to_string()));
         }
-        // liens symboliques et autres types de nœuds intentionnellement ignorés.
     }
     Ok(())
 }
@@ -1579,6 +1610,12 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
 
     pub fn archive(&self) -> &Archive {
         &self.archive
+    }
+
+    /// Read-only evaluator access for an outer security boundary to consume a
+    /// completed evaluation attestation before allowing live promotion.
+    pub fn evaluator(&self) -> &E {
+        &self.evaluator
     }
 
     pub fn history(&self) -> &[StepOutcome] {
