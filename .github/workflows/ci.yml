@@ -66,6 +66,12 @@ jobs:
   test-premium-deterministic:
     needs: clippy-default
     runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      # Premium feature sets include native crypto builds; cap parallelism to
+      # avoid exhausting the hosted runner and losing runner communication.
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - run: rustup toolchain install 1.89.0 --profile minimal
@@ -78,6 +84,10 @@ jobs:
   test-replay-relax:
     needs: clippy-default
     runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - run: rustup toolchain install 1.89.0 --profile minimal
