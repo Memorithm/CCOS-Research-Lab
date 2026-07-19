@@ -64,7 +64,7 @@ observability = ["dep:tracing"]
 simd = ["dep:wide"]
 
 [dependencies]
-forge-core = { git = "https://github.com/Memorithm/forge", rev = "5afe067b6d1223b096c39abcefb935856034ccb9", optional = true }
+forge-core = { path = "../forge/forge-core", optional = true }
 # CCOS_EXTENDED: repointed from the git dep to the vendored workspace member
 # (`crates/ccos-octasoma`) — air-gap: no network fetch. Same package name `octasoma`,
 # same v0.4.0, so the `octasoma` feature's API is unchanged.

@@ -23,3 +23,7 @@ retention, access controls, and data-subject rights where GDPR applies.
 
 A legal professional should review the dual-license wording, contributor
 rights, patent clauses, and customer terms before commercial distribution.
+
+The optional Forge backend is vendored at the exact reviewed commit
+`5afe067b6d1223b096c39abcefb935856034ccb9`; its upstream `LICENSING.md` is
+retained under `crates/forge/`.
