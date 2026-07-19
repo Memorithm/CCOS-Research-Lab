@@ -43,17 +43,13 @@ pub unsafe extern "C" fn slha_process_tile(
             return -1;
         }
 
-        // Debug-only alignment guard (CCOS_EXTENDED plan P4): the tile MUST be
-        // aligned to `align_of::<SciRustSlhaTile>()` (64 by default, 128 when the
-        // Rust crate was built with `cfg(cache_line_128)`). A misaligned tile
-        // would be UB on dereference; this catches a C-side allocation that
-        // ignored the header's `SLHA_ALIGNED(SLHA_TILE_ALIGN)` contract. Stripped
-        // in release — the FFI is an output boundary and never allocates tiles.
-        debug_assert!(
-            (tile as usize) % std::mem::align_of::<SciRustSlhaTile>() == 0,
-            "slha_process_tile: tile pointer not aligned to {}",
-            std::mem::align_of::<SciRustSlhaTile>(),
-        );
+        if !is_aligned(tile, std::mem::align_of::<SciRustSlhaTile>())
+            || !is_aligned(q_coarse, std::mem::align_of::<f32>())
+            || !is_aligned(q_sign, std::mem::align_of::<u64>())
+            || !is_aligned(score_out, std::mem::align_of::<f32>())
+        {
+            return -3;
+        }
 
         let tile_ref = &*tile;
         let q_coarse_ref = &*(q_coarse as *const [f32; D_C]);
@@ -64,6 +60,10 @@ pub unsafe extern "C" fn slha_process_tile(
     });
 
     result.unwrap_or(-2) // -2 if panic occurred
+}
+
+fn is_aligned<T>(ptr: *const T, alignment: usize) -> bool {
+    (ptr as usize).checked_rem(alignment) == Some(0)
 }
 
 /// Run the self-audit and return a JSON string.
@@ -183,6 +183,12 @@ pub unsafe extern "C" fn slha_encode_key(
         if model.is_null() || key.is_null() || out_tile.is_null() {
             return -1;
         }
+        if !is_aligned(model, std::mem::align_of::<SlhaModel>())
+            || !is_aligned(key, std::mem::align_of::<f32>())
+            || !is_aligned(out_tile, std::mem::align_of::<SciRustSlhaTile>())
+        {
+            return -5;
+        }
         // SAFETY: guarded above; caller guarantees the pointees.
         let m = &(*model).inner;
         if d != m.d {
@@ -216,6 +222,12 @@ pub unsafe extern "C" fn slha_decode_latent(
     catch_unwind(AssertUnwindSafe(|| {
         if model.is_null() || tile.is_null() || out.is_null() {
             return -1;
+        }
+        if !is_aligned(model, std::mem::align_of::<SlhaModel>())
+            || !is_aligned(tile, std::mem::align_of::<SciRustSlhaTile>())
+            || !is_aligned(out, std::mem::align_of::<f32>())
+        {
+            return -4;
         }
         // SAFETY: guarded above.
         let m = &(*model).inner;
