@@ -37,7 +37,7 @@ cargo build --release --features llm,all-full
 | `octasoma` | the OctaSoma semantic-memory backend + the `octa-semantic` recall strategy (Pro-gated) | optional |
 | `octacore` | the causal-narrow → cosine-rerank cascade — the `octa.*` MCP tools + `ccos octa` (Pro-gated; implies `octasoma`) | optional |
 | `rsi` | the CERVO/RSI self-improvement core — the `rsi.*` MCP status tools + `ccos rsi` (Pro-gated) | optional |
-| `rsi-dgm` | the hard-sandboxed Darwin–Gödel Machine loop (typed API only; Pro-gated; REPLAY-RELAX) | optional |
+| `rsi-dgm` | the Linux OS-sandboxed Darwin–Gödel Machine loop (typed API only; Pro-gated; REPLAY-RELAX) | optional |
 | `rsi-full` | RSI + a local LLM proposer backend (REPLAY-RELAX) | optional |
 | `pro-default` | **bundle**: every deterministic premium tier (`license`, `license-pq`, `signed-sync`, `slhav2`, `octasoma`, `octacore`, `rsi`, `learned-embed`) — replays bit-identically | premium |
 | `all-full` | **bundle**: `pro-default` + every REPLAY-RELAX full kernel | test/CI |
@@ -207,7 +207,7 @@ causal graph, Q-Page, and recall are **never** gated):
 - **rsi-self-improvement** *(CCOS_EXTENDED, `rsi` cargo feature)* — running the CERVO/RSI agent
   with CCOS audit (`CcosAudit`: rsi's audit log over CCOS's hash-chained `EventLog`), plus the
   `rsi.*` MCP status tools / `ccos rsi` CLI. The std-only core keeps `replay == live`.
-- **rsi-dgm** *(CCOS_EXTENDED, `rsi-dgm` cargo feature)* — the hard-sandboxed Darwin–Gödel Machine
+- **rsi-dgm** *(CCOS_EXTENDED, `rsi-dgm` cargo feature)* — the Linux OS-sandboxed Darwin–Gödel Machine
   loop (`GuardedDgm`: editable-file allowlist, GuardLayer sanitation, air-gapped
   `cargo --offline --frozen` evaluator, hash-chain-audited promotion). Deliberately reachable
   **only** through the typed API — no MCP tool and no CLI one-liner can trigger self-modification.
