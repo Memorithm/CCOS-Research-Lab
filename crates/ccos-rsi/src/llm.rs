@@ -458,6 +458,56 @@ fn build_request(
     )
 }
 
+#[cfg(feature = "llm-ollama")]
+const MAX_OLLAMA_HTTP_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Resolve a local endpoint once and require every bounded DNS answer to be
+/// loopback. The returned address is connected directly, preventing a second
+/// lookup from rebinding the request.
+#[cfg(feature = "llm-ollama")]
+fn validated_loopback_addresses(
+    host: &str,
+    port: u16,
+) -> Result<Vec<std::net::SocketAddr>, LlmError> {
+    use std::net::{IpAddr, ToSocketAddrs};
+    if port == 0
+        || host.is_empty()
+        || !host.is_ascii()
+        || host
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace())
+    {
+        return Err(LlmError::Backend("endpoint Ollama invalide".into()));
+    }
+    let mut addresses: Vec<_> = (host, port)
+        .to_socket_addrs()
+        .map_err(|error| LlmError::Backend(format!("résolution Ollama refusée: {error}")))?
+        .take(17)
+        .collect();
+    if addresses.is_empty() || addresses.len() > 16 {
+        return Err(LlmError::Backend(
+            "résolution Ollama vide ou trop grande".into(),
+        ));
+    }
+    addresses.sort_unstable();
+    addresses.dedup();
+    for address in &addresses {
+        let normalized = match address.ip() {
+            IpAddr::V6(ip) => ip
+                .to_ipv4_mapped()
+                .map(IpAddr::V4)
+                .unwrap_or(IpAddr::V6(ip)),
+            ip => ip,
+        };
+        if !normalized.is_loopback() {
+            return Err(LlmError::Backend(format!(
+                "egress Ollama refusé: adresse non-loopback {normalized}"
+            )));
+        }
+    }
+    Ok(addresses)
+}
+
 // ════════════════ Connexion automatique (découverte de modèles) ══════════ //
 
 /// Liste les modèles installés sur un serveur Ollama (`GET /api/tags`).
@@ -472,12 +522,11 @@ pub fn ollama_installed_models(
     timeout: std::time::Duration,
 ) -> Result<Vec<String>, LlmError> {
     use std::io::{Read, Write};
-    use std::net::{TcpStream, ToSocketAddrs};
+    use std::net::TcpStream;
 
     let addr = format!("{host}:{port}");
-    let sockaddr = addr
-        .to_socket_addrs()
-        .map_err(|e| LlmError::Backend(format!("résolution {addr}: {e}")))?
+    let sockaddr = validated_loopback_addresses(host, port)?
+        .into_iter()
         .next()
         .ok_or_else(|| LlmError::Backend(format!("adresse {addr} irrésolue")))?;
     let mut stream = TcpStream::connect_timeout(&sockaddr, timeout)
@@ -490,8 +539,14 @@ pub fn ollama_installed_models(
         .map_err(|e| LlmError::Backend(format!("écriture: {e}")))?;
     let mut raw = String::new();
     stream
+        .take(MAX_OLLAMA_HTTP_BYTES + 1)
         .read_to_string(&mut raw)
         .map_err(|e| LlmError::Backend(format!("lecture: {e}")))?;
+    if raw.len() as u64 > MAX_OLLAMA_HTTP_BYTES {
+        return Err(LlmError::Backend(
+            "réponse Ollama supérieure à 16 MiB".into(),
+        ));
+    }
     parse_tags_response(&raw)
 }
 
@@ -723,12 +778,11 @@ impl OllamaClient {
     /// (en-têtes + corps). Partagé par `propose` et `complete_raw`.
     fn http_roundtrip(&self, prompt: &str) -> Result<String, LlmError> {
         use std::io::{Read, Write};
-        use std::net::{TcpStream, ToSocketAddrs};
+        use std::net::TcpStream;
 
         let addr = format!("{}:{}", self.host, self.port);
-        let sockaddr = addr
-            .to_socket_addrs()
-            .map_err(|e| LlmError::Backend(format!("résolution {addr}: {e}")))?
+        let sockaddr = validated_loopback_addresses(&self.host, self.port)?
+            .into_iter()
             .next()
             .ok_or_else(|| LlmError::Backend(format!("adresse {addr} irrésolue")))?;
         let mut stream = TcpStream::connect_timeout(&sockaddr, self.timeout)
@@ -752,8 +806,14 @@ impl OllamaClient {
 
         let mut raw = String::new();
         stream
+            .take(MAX_OLLAMA_HTTP_BYTES + 1)
             .read_to_string(&mut raw)
             .map_err(|e| LlmError::Backend(format!("lecture: {e}")))?;
+        if raw.len() as u64 > MAX_OLLAMA_HTTP_BYTES {
+            return Err(LlmError::Backend(
+                "réponse Ollama supérieure à 16 MiB".into(),
+            ));
+        }
         Ok(raw)
     }
 
@@ -1002,19 +1062,106 @@ impl ClaudeTransport for UreqTransport {
         headers: &[(String, String)],
         body: &str,
     ) -> Result<String, String> {
-        let mut req = ureq::post(url);
+        validate_remote_https_url(url)?;
+        let agent = ureq::AgentBuilder::new()
+            .try_proxy_from_env(false)
+            .https_only(true)
+            .redirects(0)
+            .timeout_connect(std::time::Duration::from_secs(5))
+            .timeout_read(std::time::Duration::from_secs(120))
+            .timeout_write(std::time::Duration::from_secs(30))
+            .build();
+        let mut req = agent.post(url);
         for (k, v) in headers {
             req = req.set(k, v);
         }
-        match req.send_string(body) {
-            Ok(resp) => resp.into_string().map_err(|e| e.to_string()),
+        let response = match req.send_string(body) {
+            Ok(resp) => resp,
             // 4xx/5xx : ureq renvoie Err(Status) avec le corps JSON d'erreur
             // Anthropic — on le transmet tel quel pour que parse_claude_response
             // en extraie le message d'erreur structuré.
-            Err(ureq::Error::Status(_, resp)) => resp.into_string().map_err(|e| e.to_string()),
-            Err(e) => Err(e.to_string()),
+            Err(ureq::Error::Status(_, resp)) => resp,
+            Err(e) => return Err(e.to_string()),
+        };
+        use std::io::Read as _;
+        const MAX_RESPONSE: u64 = 16 * 1024 * 1024;
+        if response
+            .header("content-length")
+            .and_then(|value| value.parse::<u64>().ok())
+            .is_some_and(|length| length > MAX_RESPONSE)
+        {
+            return Err("Claude response exceeds 16 MiB".into());
         }
+        let mut bytes = Vec::new();
+        response
+            .into_reader()
+            .take(MAX_RESPONSE + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        if bytes.len() as u64 > MAX_RESPONSE {
+            return Err("Claude response exceeds 16 MiB".into());
+        }
+        String::from_utf8(bytes).map_err(|_| "Claude response is not UTF-8".into())
     }
+}
+
+#[cfg(feature = "llm-claude-ureq")]
+fn validate_remote_https_url(url: &str) -> Result<(), String> {
+    let allowed = std::env::var("CCOS_EGRESS_ALLOW").unwrap_or_default();
+    validate_remote_https_url_with_allowlist(url, &allowed)
+}
+
+#[cfg(feature = "llm-claude-ureq")]
+fn validate_remote_https_url_with_allowlist(url: &str, allowed: &str) -> Result<(), String> {
+    if !url.is_ascii()
+        || url
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace())
+        || url.contains('\\')
+    {
+        return Err("remote LLM URL is non-canonical".into());
+    }
+    let rest = url
+        .strip_prefix("https://")
+        .ok_or_else(|| "remote LLM transport requires https".to_string())?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') || authority.starts_with('[') {
+        return Err("remote LLM URL has an invalid authority".into());
+    }
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => {
+            let port = port
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port != 0)
+                .ok_or_else(|| "remote LLM URL has an invalid port".to_string())?;
+            (host.to_ascii_lowercase(), port)
+        }
+        None => (authority.to_ascii_lowercase(), 443),
+    };
+    if host.is_empty()
+        || host.ends_with('.')
+        || host.split('.').any(|label| {
+            label.is_empty()
+                || label.starts_with('-')
+                || label.ends_with('-')
+                || !label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+    {
+        return Err("remote LLM URL has an invalid host".into());
+    }
+    let authorized = allowed.split(',').map(str::trim).any(|entry| {
+        (entry.eq_ignore_ascii_case(&host) && port == 443)
+            || entry.eq_ignore_ascii_case(&format!("{host}:{port}"))
+    });
+    if !authorized {
+        return Err(format!(
+            "remote LLM egress to {host}:{port} is disabled; add the exact endpoint to CCOS_EGRESS_ALLOW"
+        ));
+    }
+    Ok(())
 }
 
 /// Constructeur pratique : `ClaudeClient` adossé au transport `ureq`.
@@ -1167,6 +1314,16 @@ mod tests {
 #[cfg(all(test, feature = "llm-ollama"))]
 mod ollama_tests {
     use super::*;
+
+    #[test]
+    fn ollama_resolution_is_loopback_only_and_header_safe() {
+        assert!(validated_loopback_addresses("127.0.0.1", 11434).is_ok());
+        assert!(validated_loopback_addresses("::1", 11434).is_ok());
+        assert!(validated_loopback_addresses("8.8.8.8", 11434).is_err());
+        assert!(validated_loopback_addresses("169.254.169.254", 80).is_err());
+        assert!(validated_loopback_addresses("localhost\r\nX-Evil: yes", 11434).is_err());
+        assert!(validated_loopback_addresses("localhost", 0).is_err());
+    }
 
     #[test]
     fn request_is_well_formed_http() {
@@ -1362,6 +1519,36 @@ mod ollama_tests {
 #[cfg(all(test, feature = "llm-claude"))]
 mod claude_tests {
     use super::*;
+
+    #[cfg(feature = "llm-claude-ureq")]
+    #[test]
+    fn remote_transport_requires_https_and_exact_egress_consent() {
+        assert!(validate_remote_https_url_with_allowlist(
+            "https://api.anthropic.com/v1/messages",
+            "api.anthropic.com"
+        )
+        .is_ok());
+        assert!(validate_remote_https_url_with_allowlist(
+            "http://api.anthropic.com/v1/messages",
+            "api.anthropic.com"
+        )
+        .is_err());
+        assert!(validate_remote_https_url_with_allowlist(
+            "https://user@api.anthropic.com/v1/messages",
+            "api.anthropic.com"
+        )
+        .is_err());
+        assert!(validate_remote_https_url_with_allowlist(
+            "https://api.anthropic.com/v1/messages",
+            "other.example"
+        )
+        .is_err());
+        assert!(validate_remote_https_url_with_allowlist(
+            "https://api.anthropic.com:8443/v1/messages",
+            "api.anthropic.com"
+        )
+        .is_err());
+    }
 
     /// Transport hors-ligne : renvoie un corps canné (réponse Anthropic simulée).
     struct MockTransport {

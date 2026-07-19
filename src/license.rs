@@ -29,11 +29,13 @@ include!(concat!(env!("OUT_DIR"), "/license_build_keys.rs"));
 pub const LICENSE_TOKEN_VERSION: u32 = 1;
 /// Hard input bound applied before UTF-8, base64, JSON, or signature parsing.
 pub const MAX_LICENSE_TOKEN_BYTES: usize = 64 * 1024;
+#[cfg(any(feature = "license", feature = "license-pq"))]
 const MAX_LICENSE_PAYLOAD_BYTES: usize = 8 * 1024;
 /// Hard limit for a signed offline revocation list.
 pub const MAX_REVOCATION_LIST_BYTES: usize = 1024 * 1024;
 /// Current signed revocation-list payload version.
 pub const REVOCATION_LIST_VERSION: u32 = 1;
+#[cfg(any(feature = "license", feature = "license-pq"))]
 const MAX_REVOCATION_ENTRIES: usize = 10_000;
 const ED25519_ALGORITHM: &str = "ed25519";
 const SLH_DSA_ALGORITHM: &str = "slh-dsa-shake-128s";
@@ -252,6 +254,7 @@ pub const LICENSE_PUBLIC_KEY: [u8; 32] = EMBEDDED_ED25519_PRIMARY;
 /// segment. Shared by every compiled-in verifier (ed25519 behind `license`, SLH-DSA behind
 /// `license-pq`), so it lives behind the union of those features.
 #[cfg(any(feature = "license", feature = "license-pq"))]
+#[cfg(any(feature = "license", feature = "license-pq"))]
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TokenPayload {
@@ -268,7 +271,6 @@ struct TokenPayload {
 
 /// Versioned payload used by production keyrings. Legacy payloads remain
 /// available only through explicit test/development verifiers.
-#[cfg(any(feature = "license", feature = "license-pq"))]
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TokenPayloadV1 {
@@ -318,6 +320,7 @@ pub struct RevocationList {
 }
 
 impl RevocationList {
+    #[cfg(any(feature = "license", feature = "license-pq"))]
     fn validate(&self, envelope_kid: &str, now: u64) -> Result<(), LicenseError> {
         if self.version != REVOCATION_LIST_VERSION {
             return Err(LicenseError::Invalid(format!(
@@ -586,6 +589,7 @@ fn token_sha256(blob: &[u8]) -> String {
     out
 }
 
+#[cfg(any(feature = "license", feature = "license-pq"))]
 fn token_license_id(blob: &[u8]) -> Option<String> {
     let token = std::str::from_utf8(blob).ok()?.trim();
     let mut parts = token.split('.');
@@ -603,6 +607,18 @@ fn token_license_id(blob: &[u8]) -> Option<String> {
     serde_json::from_slice::<TokenPayloadV1>(&json)
         .ok()
         .map(|payload| payload.license_id)
+}
+
+fn verified_token_license_id(blob: &[u8]) -> Option<String> {
+    #[cfg(any(feature = "license", feature = "license-pq"))]
+    {
+        token_license_id(blob)
+    }
+    #[cfg(not(any(feature = "license", feature = "license-pq")))]
+    {
+        let _ = blob;
+        None
+    }
 }
 
 /// The offline **ed25519 license verifier**: a pure signature + format check against a public key
@@ -1282,7 +1298,9 @@ impl Licensing {
         };
         match verify_token_blob(&blob, now) {
             Ok(license) => match load_configured_revocation_list(now) {
-                Ok(Some(list)) if list.revokes(&blob, token_license_id(&blob).as_deref()) => {
+                Ok(Some(list))
+                    if list.revokes(&blob, verified_token_license_id(&blob).as_deref()) =>
+                {
                     eprintln!(
                         "[ccos] license: the signed offline revocation list refuses this license; \
                          running as community (the core is unaffected)."

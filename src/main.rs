@@ -808,6 +808,9 @@ async fn run_license_claim(args: &[String]) -> CliResult {
     } else {
         format!("{base}{}", ccos::claim::CLAIM_PATH)
     };
+    let validated = allowlist
+        .validate(&url)
+        .map_err(|e| CliError::fail(format!("ccos license claim: {e}")))?;
     println!("ccos license claim — one-time code redemption\n");
     println!("  endpoint     {url}");
     println!("  sending      sha256(code) + machine fingerprint (hashes only; nothing else)");
@@ -817,10 +820,12 @@ async fn run_license_claim(args: &[String]) -> CliResult {
         code_hash: ccos::claim::code_hash(&code),
         machine: machine.clone(),
     };
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| CliError::fail(format!("ccos license claim: http client: {e}")))?;
+    let client = ccos::egress::secure_async_client(
+        &validated,
+        std::time::Duration::from_secs(3),
+        std::time::Duration::from_secs(15),
+    )
+    .map_err(|e| CliError::fail(format!("ccos license claim: http client: {e}")))?;
     let response = client
         .post(&url)
         .json(&request)
@@ -828,10 +833,11 @@ async fn run_license_claim(args: &[String]) -> CliResult {
         .await
         .map_err(|e| CliError::fail(format!("ccos license claim: request failed: {e}")))?;
     let status = response.status();
-    let body = response
-        .text()
+    let body = ccos::egress::response_bytes_limited(response, 1024 * 1024)
         .await
         .map_err(|e| CliError::fail(format!("ccos license claim: reading response: {e}")))?;
+    let body = String::from_utf8(body)
+        .map_err(|_| CliError::fail("ccos license claim: response is not UTF-8"))?;
     if !status.is_success() {
         let reason = serde_json::from_str::<ccos::claim::ClaimErr>(&body)
             .map(|e| e.error)
@@ -949,8 +955,8 @@ async fn run_update(opts: &UpdateOpts) -> CliResult {
         format!("{base}/release.manifest")
     };
     let allowlist = ccos::egress::EgressAllowlist::from_env().allowing(from);
-    allowlist
-        .check(&manifest_url)
+    let validated_manifest = allowlist
+        .validate(&manifest_url)
         .map_err(|e| CliError::fail(format!("ccos update: {e}")))?;
 
     let current = env!("CARGO_PKG_VERSION");
@@ -958,19 +964,23 @@ async fn run_update(opts: &UpdateOpts) -> CliResult {
     println!("  current      {current}");
     println!("  manifest     {manifest_url}");
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| CliError::fail(format!("ccos update: http client: {e}")))?;
-    let text = client
+    let client = ccos::egress::secure_async_client(
+        &validated_manifest,
+        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(30),
+    )
+    .map_err(|e| CliError::fail(format!("ccos update: http client: {e}")))?;
+    let response = client
         .get(&manifest_url)
         .send()
         .await
         .and_then(|r| r.error_for_status())
-        .map_err(|e| CliError::fail(format!("ccos update: fetching the manifest: {e}")))?
-        .text()
+        .map_err(|e| CliError::fail(format!("ccos update: fetching the manifest: {e}")))?;
+    let text = ccos::egress::response_bytes_limited(response, 1024 * 1024)
         .await
         .map_err(|e| CliError::fail(format!("ccos update: reading the manifest: {e}")))?;
+    let text = String::from_utf8(text)
+        .map_err(|_| CliError::fail("ccos update: manifest is not UTF-8"))?;
 
     // Trust the signature, not the server.
     let manifest = verify_manifest(&text)
@@ -1033,22 +1043,23 @@ async fn run_update(opts: &UpdateOpts) -> CliResult {
     }
 
     // Download and hash-check BEFORE touching anything on disk at the target.
-    allowlist
-        .check(&manifest.url)
-        .or_else(|_| {
-            ccos::egress::EgressAllowlist::from_env()
-                .allowing(&manifest.url)
-                .check(&manifest.url)
-        })
+    let validated_artifact = allowlist
+        .validate(&manifest.url)
         .map_err(|e| CliError::fail(format!("ccos update: artifact host: {e}")))?;
     println!("  downloading  {}", manifest.url);
-    let bytes = client
+    let artifact_client = ccos::egress::secure_async_client(
+        &validated_artifact,
+        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(300),
+    )
+    .map_err(|e| CliError::fail(format!("ccos update: artifact http client: {e}")))?;
+    let response = artifact_client
         .get(&manifest.url)
         .send()
         .await
         .and_then(|r| r.error_for_status())
-        .map_err(|e| CliError::fail(format!("ccos update: downloading: {e}")))?
-        .bytes()
+        .map_err(|e| CliError::fail(format!("ccos update: downloading: {e}")))?;
+    let bytes = ccos::egress::response_bytes_limited(response, 512 * 1024 * 1024)
         .await
         .map_err(|e| CliError::fail(format!("ccos update: downloading: {e}")))?;
     let got = {
