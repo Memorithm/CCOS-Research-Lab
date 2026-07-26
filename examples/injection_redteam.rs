@@ -11,8 +11,8 @@
 //! cargo run --example injection_redteam
 //! ```
 
-use ccos::injection_classifier::InjectionDetector;
-use ccos::sanitizer;
+use ccos_research_lab::injection_classifier::InjectionDetector;
+use ccos_research_lab::sanitizer;
 
 /// SplitMix64 — a tiny, fully deterministic PRNG (no external deps, no global state).
 struct SplitMix64(u64);

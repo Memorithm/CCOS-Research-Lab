@@ -1,5 +1,5 @@
 [package]
-name = "ccos"
+name = "ccos-research-lab"
 # 0.4.0 = the CCOS_EXTENDED premium fusion (plan §A): the CCOS 0.3 core plus the
 # vendored SLHAv2 / OctaSoma / CERVO-RSI kernels behind opt-in features. The
 # DEFAULT build's behaviour and dependency tree are unchanged from CCOS 0.3
@@ -13,6 +13,10 @@ publish = false
 # `cargo run` (e.g. the CI smoke `cargo run --features llm -- version`)
 # unambiguous now that the workspace also ships the `ccos-migrate` tool.
 default-run = "ccos"
+
+[lib]
+name = "ccos_research_lab"
+path = "src/lib.rs"
 
 [dependencies]
 # Async runtime + HTTP client are only needed by the LLM / eval / workspace

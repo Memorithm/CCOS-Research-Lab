@@ -1,9 +1,9 @@
 //! Offline trainer for the injection-detection signal.
 //!
 //! Fits a **multinomial Naive Bayes** model (closed-form, no RNG) over the
-//! [`ccos::hashing_tokenizer`] count vectors of a fixed synthetic corpus, then
+//! [`ccos_research_lab::hashing_tokenizer`] count vectors of a fixed synthetic corpus, then
 //! locks the weights into `assets/injection_model.bin` (the immutable,
-//! SHA-256-verified blob loaded by [`ccos::injection_classifier`]). Because both
+//! SHA-256-verified blob loaded by [`ccos_research_lab::injection_classifier`]). Because both
 //! the corpus and the fit are deterministic, re-running this reproduces the same
 //! bytes and the same fingerprint, every build.
 //!
@@ -11,9 +11,9 @@
 //! cargo run --example train_injection
 //! ```
 
-use ccos::hashing_tokenizer::HashingTokenizer;
-use ccos::injection_classifier::{InjectionDetector, LinearModel};
-use ccos::sanitizer;
+use ccos_research_lab::hashing_tokenizer::HashingTokenizer;
+use ccos_research_lab::injection_classifier::{InjectionDetector, LinearModel};
+use ccos_research_lab::sanitizer;
 use std::path::PathBuf;
 
 /// Benign text: code, comments, logs, SQL, prose — including some that *mentions*

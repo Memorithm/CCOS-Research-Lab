@@ -10,9 +10,9 @@
 //!
 //! Run with: `cargo run --example octasoma_semantic --features octasoma`
 
-use ccos::external_memory::{CcosMemory, ExternalMemory};
-use ccos::license::{License, Licensing};
-use ccos::octa_index::{
+use ccos_research_lab::external_memory::{CcosMemory, ExternalMemory};
+use ccos_research_lab::license::{License, Licensing};
+use ccos_research_lab::octa_index::{
     recall_semantic, recall_semantic_calibrated, SemanticFeedback, SemanticMemoryAccess,
 };
 use octasoma::HashEmbedder;

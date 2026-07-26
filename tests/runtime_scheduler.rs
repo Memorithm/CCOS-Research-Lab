@@ -2,9 +2,9 @@
 //! Verifies HOT/WARM/COLD paging on graphs built by the real engine:
 //! eviction correctness, priority ordering, and that no node is ever lost.
 
-use ccos::incremental::IncrementalGraphEngine;
-use ccos::memory::MemoryGraph;
-use ccos::scheduler::{ContextScheduler, MemoryZone};
+use ccos_research_lab::incremental::IncrementalGraphEngine;
+use ccos_research_lab::memory::MemoryGraph;
+use ccos_research_lab::scheduler::{ContextScheduler, MemoryZone};
 
 fn build_graph(files: usize) -> MemoryGraph {
     let mut graph = MemoryGraph::new(0.2, 1_000_000);

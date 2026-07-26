@@ -11,10 +11,10 @@
 
 #![cfg(feature = "octacore")]
 
-use ccos::external_memory::{CcosMemory, ExternalMemory};
-use ccos::license::License;
-use ccos::license::{Feature, LicenseError, Licensing, Tier};
-use ccos::octacore_bridge::{
+use ccos_research_lab::external_memory::{CcosMemory, ExternalMemory};
+use ccos_research_lab::license::License;
+use ccos_research_lab::license::{Feature, LicenseError, Licensing, Tier};
+use ccos_research_lab::octacore_bridge::{
     ranked_items, recall_semantic, semantic_cascade, CausalCascadeAccess, CcosScope,
     OfflineEmbedder,
 };
@@ -70,7 +70,7 @@ fn community_tier_refuses_cascade_without_degrading_core() {
     // bridge is an opt-in premium alternative, not a replacement.
     let mem = seeded_memory();
     let core_win = mem.recall(
-        &ccos::external_memory::Recall::semantic("open_pooled_database_connection"),
+        &ccos_research_lab::external_memory::Recall::semantic("open_pooled_database_connection"),
         4096,
     );
     assert!(core_win.strategy.contains("semantic"));

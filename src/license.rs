@@ -72,13 +72,13 @@ pub enum Feature {
     /// scheme. The core recall path is unchanged — only the *precision* of the semantic
     /// embedding store reflects the tier, exactly like [`Feature::CustomAuthorityWeights`].
     SlhAv2Embeddings,
-    /// **Adaptive retrieval** — the `ccos::retrieval` self-improving feedback loop
+    /// **Adaptive retrieval** — the `ccos_research_lab::retrieval` self-improving feedback loop
     /// (`ImprovementLoop`: learn a projection from confirmed (query, relevant-doc) pairs so Recall@k
     /// climbs). The *core* retrieval (dense / BM25 / hybrid + metrics) is free and fully functional,
     /// exactly like the rest of CCOS's core; only the continuous-improvement tier is gated.
     AdaptiveRetrieval,
     /// **OctaSoma semantic memory** — the region-sharded, embedding-based semantic-anchor
-    /// backend (`ccos::octa_index`, compiled behind the `octasoma` cargo feature): true-embedding
+    /// backend (`ccos_research_lab::octa_index`, compiled behind the `octasoma` cargo feature): true-embedding
     /// recall resolved *within* a causal region and expanded through the causal graph — the
     /// validated scope→rerank cascade. The free core recall strategies (working-set / around /
     /// task / the INT4 TF-IDF `Semantic`/`Hybrid` entries) are untouched; only the

@@ -18,12 +18,12 @@
 //! Fully deterministic — no RNG. Run:
 //!   cargo run --release --example causal_flash_scaling
 //!
-//! [`eigencentrality`]: ccos::memory::MemoryGraph::eigencentrality
+//! [`eigencentrality`]: ccos_research_lab::memory::MemoryGraph::eigencentrality
 
 use std::time::Instant;
 
-use ccos::causal_flash::CausalFlashConfig;
-use ccos::memory::{EdgeType, MemoryGraph, NodeId, NodeState, NodeType};
+use ccos_research_lab::causal_flash::CausalFlashConfig;
+use ccos_research_lab::memory::{EdgeType, MemoryGraph, NodeId, NodeState, NodeType};
 
 fn build(bulk: usize) -> MemoryGraph {
     let mut g = MemoryGraph::new(0.2, usize::MAX);

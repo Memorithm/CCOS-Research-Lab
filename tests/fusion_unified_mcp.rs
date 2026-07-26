@@ -18,9 +18,9 @@
 
 #![cfg(all(feature = "slhav2-full", feature = "octacore", feature = "rsi"))]
 
-use ccos::agent_session::AgentSession;
-use ccos::license::{License, Licensing};
-use ccos::mcp::handle;
+use ccos_research_lab::agent_session::AgentSession;
+use ccos_research_lab::license::{License, Licensing};
+use ccos_research_lab::mcp::handle;
 use serde_json::{json, Value};
 
 fn req(id: i64, method: &str, params: Value) -> Value {

@@ -2,15 +2,15 @@
 //! subsystem on a small synthetic workspace. Extracted from `main` to keep the
 //! CLI entry point small and focused (one responsibility per module).
 
-use ccos::consensus::ConsensusEngine;
-use ccos::distributed_event_log::DistributedEventLog;
-use ccos::event_log::{EventLog, EventPayload, EventType};
-use ccos::guard::{GuardConfig, GuardLayer};
-use ccos::incremental::IncrementalGraphEngine;
-use ccos::llm::{LlmClient, LlmConfig};
-use ccos::memory::{MemoryGraph, NodeId};
-use ccos::parser::ASTParser;
-use ccos::util::sha256_hex as compute_file_hash;
+use ccos_research_lab::consensus::ConsensusEngine;
+use ccos_research_lab::distributed_event_log::DistributedEventLog;
+use ccos_research_lab::event_log::{EventLog, EventPayload, EventType};
+use ccos_research_lab::guard::{GuardConfig, GuardLayer};
+use ccos_research_lab::incremental::IncrementalGraphEngine;
+use ccos_research_lab::llm::{LlmClient, LlmConfig};
+use ccos_research_lab::memory::{MemoryGraph, NodeId};
+use ccos_research_lab::parser::ASTParser;
+use ccos_research_lab::util::sha256_hex as compute_file_hash;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -454,7 +454,7 @@ pub async fn handle_request(state: &AppState, path: &str, body: &str) -> Result<
         },
     );
 
-    let mut replayer = ccos::event_log::EventReplayer::new();
+    let mut replayer = ccos_research_lab::event_log::EventReplayer::new();
     match event_log.replay_deterministic(&mut replayer) {
         Ok(count) => {
             println!("  [REPLAY] Replayed {} events successfully", count);

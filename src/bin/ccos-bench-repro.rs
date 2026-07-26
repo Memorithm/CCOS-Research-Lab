@@ -1,4 +1,4 @@
-use ccos::benchmark::BenchmarkHarness;
+use ccos_research_lab::benchmark::BenchmarkHarness;
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -9,7 +9,7 @@ struct ReproducibleReport {
     dataset_version: String,
     seed: &'static str,
     configuration: Configuration,
-    result: ccos::benchmark::BenchmarkReport,
+    result: ccos_research_lab::benchmark::BenchmarkReport,
 }
 
 #[derive(Serialize)]

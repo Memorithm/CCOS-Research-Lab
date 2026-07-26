@@ -195,8 +195,14 @@ mod tests {
 
     #[test]
     fn try_new_fails_fast_on_unreachable_endpoint() {
-        // Port 1 refuses immediately — the constructor must error, not hang or fake a dimension.
+        // Port 1 is outside the default loopback allowlist (80/443/11434), so
+        // the hardened egress gate denies it before any connection attempt;
+        // where the gate is widened, the connection is refused instead. Either
+        // way the constructor must error — never hang or fake a dimension.
         let err = NeuralEncoder::try_new("http://127.0.0.1:1", "any-model");
-        assert!(matches!(err, Err(NeuralEmbedError::Unreachable(_))));
+        assert!(matches!(
+            err,
+            Err(NeuralEmbedError::EgressDenied(_)) | Err(NeuralEmbedError::Unreachable(_))
+        ));
     }
 }

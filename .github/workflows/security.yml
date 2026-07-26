@@ -1,3 +1,9 @@
+# ┌──────────────────────────────────────────────────────────────────────┐
+# │  EXPERIMENTAL — OUTSIDE CERTIFIABLE PRODUCT BOUNDARY                 │
+# │  CCOS Research Lab — not CCOS Core, not CCOS Enterprise.             │
+# │  Runners for sandbox/candidate tests must be ephemeral and           │
+# │  secret-free (docs/EXPERIMENT_SAFETY.md).                            │
+# └──────────────────────────────────────────────────────────────────────┘
 name: Periodic Security Validation
 
 on:

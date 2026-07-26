@@ -1,3 +1,9 @@
+# ┌──────────────────────────────────────────────────────────────────────┐
+# │  EXPERIMENTAL — OUTSIDE CERTIFIABLE PRODUCT BOUNDARY                 │
+# │  CCOS Research Lab — not CCOS Core, not CCOS Enterprise.             │
+# │  Runners for sandbox/candidate tests must be ephemeral and           │
+# │  secret-free (docs/EXPERIMENT_SAFETY.md).                            │
+# └──────────────────────────────────────────────────────────────────────┘
 name: CI
 
 on:
@@ -26,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt
-      - run: cargo +1.89.0 fmt --package ccos --check
+      - run: cargo +1.89.0 fmt --package ccos-research-lab --check
 
   clippy-default:
     needs: format

@@ -1,5 +1,5 @@
-use ccos::adversarial::{AdversarialEngine, AdversarialMode};
-use ccos::guard::{GuardConfig, GuardLayer};
+use ccos_research_lab::adversarial::{AdversarialEngine, AdversarialMode};
+use ccos_research_lab::guard::{GuardConfig, GuardLayer};
 
 fn make_guard() -> GuardLayer {
     GuardLayer::new(GuardConfig::default())

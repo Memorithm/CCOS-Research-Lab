@@ -5,7 +5,7 @@
 //! marker. This test pins that boundary at runtime, in the default build:
 //!
 //! 1. **Air-gap ⇒ no network nondeterminism.** The default
-//!    [`ccos::egress::EgressAllowlist`] allows localhost/loopback only and
+//!    [`ccos_research_lab::egress::EgressAllowlist`] allows localhost/loopback only and
 //!    refuses a public host. The `llm`/`neural-embed`/`eval` call sites all
 //!    route through it, so the default build can make no off-host call — there
 //!    is no network source of replay divergence in the default configuration.
@@ -22,8 +22,8 @@
 //! This test compiles and passes in the **default build** (no features); it is
 //! the executable form of the determinism contract.
 
-use ccos::egress::{EgressAllowlist, EgressError};
-use ccos::license::{Feature, LicenseError, Licensing};
+use ccos_research_lab::egress::{EgressAllowlist, EgressError};
+use ccos_research_lab::license::{Feature, LicenseError, Licensing};
 
 const NOW: u64 = 1_700_000_000;
 

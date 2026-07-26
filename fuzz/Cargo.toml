@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-ccos = { path = "..", default-features = false, features = ["license"] }
+ccos-research-lab = { path = "..", default-features = false, features = ["license"] }
 serde_json = "1"
 base64 = "0.22"
 

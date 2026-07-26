@@ -8,9 +8,9 @@
 //! whose order isn't stable, a default that isn't elided). It is the randomized
 //! counterpart to the hand-written create→reload cycle in `tests/persistence.rs`.
 
-use ccos::agent_session::AgentSession;
-use ccos::external_memory::{CcosMemory, Recall};
-use ccos::memory::{MemoryGraph, NodeId};
+use ccos_research_lab::agent_session::AgentSession;
+use ccos_research_lab::external_memory::{CcosMemory, Recall};
+use ccos_research_lab::memory::{MemoryGraph, NodeId};
 use proptest::prelude::*;
 use sha2::{Digest, Sha256};
 
@@ -32,7 +32,7 @@ fn graph_hash(graph: &MemoryGraph) -> String {
             h.update(n.recency.to_le_bytes());
         }
     }
-    let mut edges: Vec<&ccos::memory::GraphEdge> = graph.edges().iter().collect();
+    let mut edges: Vec<&ccos_research_lab::memory::GraphEdge> = graph.edges().iter().collect();
     edges.sort_by(|a, b| {
         a.source
             .0

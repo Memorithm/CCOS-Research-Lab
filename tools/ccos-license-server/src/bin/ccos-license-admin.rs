@@ -114,15 +114,15 @@ fn cmd_manifest(args: &[String]) {
         h.update(&bytes);
         format!("{:x}", h.finalize())
     };
-    let manifest = ccos::release::ReleaseManifest {
+    let manifest = ccos_research_lab::release::ReleaseManifest {
         version: version.clone(),
-        released_unix: ccos::license::now_unix(),
+        released_unix: ccos_research_lab::license::now_unix(),
         sha256: sha256.clone(),
         url: url.clone(),
         tier,
     };
-    let line = ccos::release::sign_manifest(&seed, &manifest);
-    if let Err(e) = ccos::util::write_durable(&out, format!("{line}\n").as_bytes()) {
+    let line = ccos_research_lab::release::sign_manifest(&seed, &manifest);
+    if let Err(e) = ccos_research_lab::util::write_durable(&out, format!("{line}\n").as_bytes()) {
         eprintln!("error: cannot write {}: {e}", out.display());
         exit(1)
     }
@@ -201,8 +201,8 @@ fn cmd_new(vault_path: &Path, args: &[String]) {
 
     let mut vault = load_or_new(vault_path, true);
     let entropy: [u8; 16] = rand::random();
-    let code = ccos::claim::code_from_entropy(&entropy);
-    let hash = ccos::claim::code_hash(&code);
+    let code = ccos_research_lab::claim::code_from_entropy(&entropy);
+    let hash = ccos_research_lab::claim::code_hash(&code);
     vault.entries.insert(
         hash.clone(),
         Entry {
@@ -210,7 +210,7 @@ fn cmd_new(vault_path: &Path, args: &[String]) {
             label,
             days,
             status: Status::Unclaimed,
-            created_unix: ccos::license::now_unix(),
+            created_unix: ccos_research_lab::license::now_unix(),
             claimed_unix: None,
             exp_unix: None,
             machine: None,
@@ -269,11 +269,11 @@ fn cmd_flip(vault_path: &Path, code_or_hash: Option<&String>, flip: Flip) {
     };
     // Accept either the code itself (canonicalized then hashed) or the hash
     // straight out of `list`.
-    let hash = if ccos::claim::is_sha256_hex(input) {
+    let hash = if ccos_research_lab::claim::is_sha256_hex(input) {
         input.clone()
     } else {
-        match ccos::claim::canonical_code(input) {
-            Some(code) => ccos::claim::code_hash(&code),
+        match ccos_research_lab::claim::canonical_code(input) {
+            Some(code) => ccos_research_lab::claim::code_hash(&code),
             None => usage("that is neither a claim code nor a 64-hex code-hash"),
         }
     };

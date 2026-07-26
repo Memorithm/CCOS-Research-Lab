@@ -8,25 +8,27 @@ mod commands_runtime;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use ccos::adversarial::{AdversarialEngine, AdversarialMode};
-use ccos::agent_session::AgentSession;
-use ccos::context_policy::ContextPolicy;
-use ccos::context_region::file_of;
-use ccos::distributed_event_log::DistributedEventLog;
-use ccos::eval::{run_eval, EvalConfig};
-use ccos::event_log::{EventLog, EventPayload, EventReplayer, EventType, GraphReconstructor};
-use ccos::experiment::{run_experiment, ExperimentConfig};
-use ccos::external_memory::{CcosMemory, ExternalMemory, Recall, RecallWindow};
-use ccos::guard::{GuardConfig, GuardLayer};
-use ccos::incremental::IncrementalGraphEngine;
-use ccos::memory::{MemoryGraph, NodeId, ScoringWeights};
-use ccos::persist::KernelSnapshot;
-use ccos::query;
-use ccos::region_engine::{ContextRegionEngine, RegionQuery};
-use ccos::region_metrics;
-use ccos::trace::parse_cargo_test_output;
-use ccos::trace::ExecutionTrace;
-use ccos::util::sha256_hex;
+use ccos_research_lab::adversarial::{AdversarialEngine, AdversarialMode};
+use ccos_research_lab::agent_session::AgentSession;
+use ccos_research_lab::context_policy::ContextPolicy;
+use ccos_research_lab::context_region::file_of;
+use ccos_research_lab::distributed_event_log::DistributedEventLog;
+use ccos_research_lab::eval::{run_eval, EvalConfig};
+use ccos_research_lab::event_log::{
+    EventLog, EventPayload, EventReplayer, EventType, GraphReconstructor,
+};
+use ccos_research_lab::experiment::{run_experiment, ExperimentConfig};
+use ccos_research_lab::external_memory::{CcosMemory, ExternalMemory, Recall, RecallWindow};
+use ccos_research_lab::guard::{GuardConfig, GuardLayer};
+use ccos_research_lab::incremental::IncrementalGraphEngine;
+use ccos_research_lab::memory::{MemoryGraph, NodeId, ScoringWeights};
+use ccos_research_lab::persist::KernelSnapshot;
+use ccos_research_lab::query;
+use ccos_research_lab::region_engine::{ContextRegionEngine, RegionQuery};
+use ccos_research_lab::region_metrics;
+use ccos_research_lab::trace::parse_cargo_test_output;
+use ccos_research_lab::trace::ExecutionTrace;
+use ccos_research_lab::util::sha256_hex;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -115,7 +117,7 @@ async fn main() {
         // customer pastes this fingerprint next to their claim code. Same
         // opaque hash the CLI claim sends — never a raw hardware identifier.
         "license" if rest.first().map(String::as_str) == Some("fingerprint") => {
-            match ccos::claim::host_fingerprint() {
+            match ccos_research_lab::claim::host_fingerprint() {
                 Some(fp) => {
                     println!("{fp}");
                     Ok(())
@@ -140,7 +142,7 @@ async fn main() {
                 .filter(|a| !a.starts_with("--"))
                 .map(PathBuf::from)
                 .or_else(|| std::env::var("CCOS_MCP_WORKSPACE").ok().map(PathBuf::from));
-            match ccos::mcp::serve_workspace(workspace) {
+            match ccos_research_lab::mcp::serve_workspace(workspace) {
                 Ok(()) => Ok(()),
                 Err(e) => Err(CliError::fail(format!("ccos mcp: {e}"))),
             }
@@ -201,11 +203,11 @@ impl DoctorOpts {
 /// (debug build, missing feature, placeholder key, unverified token). Pure and read-only — the first
 /// thing to run after installing on a server. See `docs/DEPLOYMENT.md`.
 fn run_doctor(opts: &DoctorOpts) -> CliResult {
-    let now = ccos::license::now_unix();
-    let licensing = ccos::license::Licensing::detect(now);
-    let pro = matches!(licensing.tier(now), ccos::license::Tier::Pro);
-    let key_set = ccos::license::embedded_key_is_set();
-    let token_present = ccos::license::load_license_blob().is_some();
+    let now = ccos_research_lab::license::now_unix();
+    let licensing = ccos_research_lab::license::Licensing::detect(now);
+    let pro = matches!(licensing.tier(now), ccos_research_lab::license::Tier::Pro);
+    let key_set = ccos_research_lab::license::embedded_key_is_set();
+    let token_present = ccos_research_lab::license::load_license_blob().is_some();
 
     let release = !cfg!(debug_assertions);
     let f_llm = cfg!(feature = "llm");
@@ -223,7 +225,7 @@ fn run_doctor(opts: &DoctorOpts) -> CliResult {
     let f_rsi = cfg!(feature = "rsi");
     let f_rsi_dgm = cfg!(feature = "rsi-dgm");
     let f_signed_sync = cfg!(feature = "signed-sync");
-    let pq_key_set = ccos::license::embedded_slh_dsa_key_is_set();
+    let pq_key_set = ccos_research_lab::license::embedded_slh_dsa_key_is_set();
     let any_verifier = f_license || f_license_pq;
     let any_key_set = key_set || pq_key_set;
 
@@ -279,7 +281,7 @@ fn run_doctor(opts: &DoctorOpts) -> CliResult {
             },
             "parser": if f_syn { "syn-ast" } else { "line-heuristic" },
             "license": {
-                "verifier": ccos::license::compiled_verifier_scheme(),
+                "verifier": ccos_research_lab::license::compiled_verifier_scheme(),
                 "ed25519_key_set": key_set,
                 "slh_dsa_key_set": pq_key_set,
                 "tier": if pro { "pro" } else { "community" },
@@ -341,7 +343,7 @@ fn run_doctor(opts: &DoctorOpts) -> CliResult {
         }
     );
     println!("\n  license");
-    let verifier_label = match ccos::license::compiled_verifier_scheme() {
+    let verifier_label = match ccos_research_lab::license::compiled_verifier_scheme() {
         "slh-dsa+ed25519" => "slh-dsa (SLH-DSA-128s) + ed25519 (both compiled in)",
         "slh-dsa" => "slh-dsa (SLH-DSA-128s, post-quantum, compiled in)",
         "ed25519" => "ed25519 (compiled in)",
@@ -472,14 +474,16 @@ fn confirm(prompt: &str) -> bool {
 }
 
 /// `ccos setup [--yes] [--dry-run] [--json] [--hook] [--dir D] [--report F] [--workspace W]`
-/// — the one-command install-and-verify pass (see `docs/SETUP.md` and `ccos::setup`):
+/// — the one-command install-and-verify pass (see `docs/SETUP.md` and `ccos_research_lab::setup`):
 /// probe the host, register the MCP server in the project's `.mcp.json`
 /// (idempotent, consent-gated, fail-closed on anything unparseable), run the
 /// deterministic first-run self-test battery, and seal the verdict into
 /// `setup_report.json` — the artifact an MCP agent relays via `ccos://setup/report`.
 /// Exits 0 only when every check passed.
 fn run_setup(opts: &SetupOpts) -> CliResult {
-    use ccos::setup::{self, ActionStatus, McpWiring, OllamaProbe, SetupReport, WiringAction};
+    use ccos_research_lab::setup::{
+        self, ActionStatus, McpWiring, OllamaProbe, SetupReport, WiringAction,
+    };
 
     let probe = setup::probe(&opts.dir);
     let quiet = opts.json;
@@ -632,7 +636,7 @@ fn run_setup(opts: &SetupOpts) -> CliResult {
         println!(
             "\n  Mode B hook (manual wiring — setup never edits agent settings itself):\n\
              \x20   add to .claude/settings.json, then pick ONE writer per workspace:\n{}",
-            ccos::setup::hook_snippet()
+            ccos_research_lab::setup::hook_snippet()
         );
     }
 
@@ -701,10 +705,10 @@ fn run_setup(opts: &SetupOpts) -> CliResult {
 /// license file) and verifies it against the baked-in public key. Without the `license` feature there
 /// is no embedded verifier, so it always reports community — the core is never gated or degraded.
 fn run_license(_args: &[String]) -> CliResult {
-    use ccos::license::{Feature, Tier};
-    let now = ccos::license::now_unix();
-    let blob = ccos::license::load_license_blob();
-    let licensing = ccos::license::Licensing::detect(now);
+    use ccos_research_lab::license::{Feature, Tier};
+    let now = ccos_research_lab::license::now_unix();
+    let blob = ccos_research_lab::license::load_license_blob();
+    let licensing = ccos_research_lab::license::Licensing::detect(now);
 
     match licensing.tier(now) {
         Tier::Pro => {
@@ -743,7 +747,7 @@ fn run_license(_args: &[String]) -> CliResult {
 
 /// `ccos license claim <CODE> --from <URL>` — redeem a **one-time claim code**
 /// against the vendor's claim counter and install the returned single-seat
-/// license (see `docs/LICENSING_SERVER.md` and `ccos::claim`). The exchange
+/// license (see `docs/LICENSING_SERVER.md` and `ccos_research_lab::claim`). The exchange
 /// sends exactly two hashes — `sha256(code)` and the opaque machine
 /// fingerprint — never the code, never a hardware identifier. The received
 /// token is verified **locally** against the public key baked into this binary
@@ -774,13 +778,13 @@ async fn run_license_claim(args: &[String]) -> CliResult {
     let (Some(code_arg), Some(from)) = (code_arg, from) else {
         return Err(usage());
     };
-    let Some(code) = ccos::claim::canonical_code(code_arg) else {
+    let Some(code) = ccos_research_lab::claim::canonical_code(code_arg) else {
         return Err(CliError::fail(
             "ccos license claim: that is not a claim code (expected \
              CCOS-XXXXX-XXXXX-XXXXX-XXXXX, symbols 0-9/A-Z without I L O U)",
         ));
     };
-    let Some(machine) = ccos::claim::host_fingerprint() else {
+    let Some(machine) = ccos_research_lab::claim::host_fingerprint() else {
         return Err(CliError::fail(
             "ccos license claim: no stable machine id on this host (checked $CCOS_MACHINE_ID, \
              /etc/machine-id, /var/lib/dbus/machine-id) — a single-seat license needs one. \
@@ -789,12 +793,12 @@ async fn run_license_claim(args: &[String]) -> CliResult {
     };
     // The explicit --from endpoint is this call's egress consent; the ambient
     // policy for every other call is untouched. Still announced, still checked.
-    let allowlist = ccos::egress::EgressAllowlist::from_env().allowing(from);
+    let allowlist = ccos_research_lab::egress::EgressAllowlist::from_env().allowing(from);
     allowlist
         .check(from)
         .map_err(|e| CliError::fail(format!("ccos license claim: {e}")))?;
     if from.starts_with("http://")
-        && ccos::egress::EgressAllowlist::localhost_only()
+        && ccos_research_lab::egress::EgressAllowlist::localhost_only()
             .check(from)
             .is_err()
     {
@@ -806,7 +810,7 @@ async fn run_license_claim(args: &[String]) -> CliResult {
     let url = if base.ends_with(".php") {
         base.to_string()
     } else {
-        format!("{base}{}", ccos::claim::CLAIM_PATH)
+        format!("{base}{}", ccos_research_lab::claim::CLAIM_PATH)
     };
     let validated = allowlist
         .validate(&url)
@@ -815,12 +819,12 @@ async fn run_license_claim(args: &[String]) -> CliResult {
     println!("  endpoint     {url}");
     println!("  sending      sha256(code) + machine fingerprint (hashes only; nothing else)");
 
-    let request = ccos::claim::ClaimRequest {
-        schema: ccos::claim::CLAIM_SCHEMA.to_string(),
-        code_hash: ccos::claim::code_hash(&code),
+    let request = ccos_research_lab::claim::ClaimRequest {
+        schema: ccos_research_lab::claim::CLAIM_SCHEMA.to_string(),
+        code_hash: ccos_research_lab::claim::code_hash(&code),
         machine: machine.clone(),
     };
-    let client = ccos::egress::secure_async_client(
+    let client = ccos_research_lab::egress::secure_async_client(
         &validated,
         std::time::Duration::from_secs(3),
         std::time::Duration::from_secs(15),
@@ -833,26 +837,26 @@ async fn run_license_claim(args: &[String]) -> CliResult {
         .await
         .map_err(|e| CliError::fail(format!("ccos license claim: request failed: {e}")))?;
     let status = response.status();
-    let body = ccos::egress::response_bytes_limited(response, 1024 * 1024)
+    let body = ccos_research_lab::egress::response_bytes_limited(response, 1024 * 1024)
         .await
         .map_err(|e| CliError::fail(format!("ccos license claim: reading response: {e}")))?;
     let body = String::from_utf8(body)
         .map_err(|_| CliError::fail("ccos license claim: response is not UTF-8"))?;
     if !status.is_success() {
-        let reason = serde_json::from_str::<ccos::claim::ClaimErr>(&body)
+        let reason = serde_json::from_str::<ccos_research_lab::claim::ClaimErr>(&body)
             .map(|e| e.error)
             .unwrap_or_else(|_| body.trim().to_string());
         return Err(CliError::fail(format!(
             "ccos license claim: refused by the counter ({status}): {reason}"
         )));
     }
-    let ok: ccos::claim::ClaimOk = serde_json::from_str(&body)
+    let ok: ccos_research_lab::claim::ClaimOk = serde_json::from_str(&body)
         .map_err(|e| CliError::fail(format!("ccos license claim: malformed response: {e}")))?;
 
     // Trust the signature, not the server: verify against OUR baked-in key
     // and OUR fingerprint before writing anything.
-    let now = ccos::license::now_unix();
-    let license = ccos::license::verify_token_blob(ok.token.as_bytes(), now)
+    let now = ccos_research_lab::license::now_unix();
+    let license = ccos_research_lab::license::verify_token_blob(ok.token.as_bytes(), now)
         .map_err(|e| CliError::fail(format!("ccos license claim: token did not verify: {e}")))?;
     if !license.machine_ok(Some(&machine)) {
         return Err(CliError::fail(
@@ -863,18 +867,20 @@ async fn run_license_claim(args: &[String]) -> CliResult {
     if !license.is_valid_at(now) {
         eprintln!("[ccos] warning: the received license is already expired — installing anyway (it names you for support), but the tier will read community.");
     }
-    let Some(path) = ccos::license::license_install_path() else {
+    let Some(path) = ccos_research_lab::license::license_install_path() else {
         return Err(CliError::fail(
             "ccos license claim: nowhere to install (no $CCOS_LICENSE_FILE, no $XDG_CONFIG_HOME, \
              no $HOME)",
         ));
     };
-    ccos::util::write_durable(&path, format!("{}\n", ok.token).as_bytes()).map_err(|e| {
-        CliError::fail(format!(
-            "ccos license claim: writing {}: {e}",
-            path.display()
-        ))
-    })?;
+    ccos_research_lab::util::write_durable(&path, format!("{}\n", ok.token).as_bytes()).map_err(
+        |e| {
+            CliError::fail(format!(
+                "ccos license claim: writing {}: {e}",
+                path.display()
+            ))
+        },
+    )?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -939,7 +945,7 @@ impl UpdateOpts {
 /// reports without writing. See `docs/LICENSING_SERVER.md` ("Updates").
 #[cfg(feature = "license")]
 async fn run_update(opts: &UpdateOpts) -> CliResult {
-    use ccos::release::{compare_versions, verify_manifest};
+    use ccos_research_lab::release::{compare_versions, verify_manifest};
     let Some(from) = opts.from.as_deref() else {
         return Err(CliError::usage(
             "usage: ccos update --from <https://releases-host> [--check] [--yes]\n\
@@ -954,7 +960,7 @@ async fn run_update(opts: &UpdateOpts) -> CliResult {
     } else {
         format!("{base}/release.manifest")
     };
-    let allowlist = ccos::egress::EgressAllowlist::from_env().allowing(from);
+    let allowlist = ccos_research_lab::egress::EgressAllowlist::from_env().allowing(from);
     let validated_manifest = allowlist
         .validate(&manifest_url)
         .map_err(|e| CliError::fail(format!("ccos update: {e}")))?;
@@ -964,7 +970,7 @@ async fn run_update(opts: &UpdateOpts) -> CliResult {
     println!("  current      {current}");
     println!("  manifest     {manifest_url}");
 
-    let client = ccos::egress::secure_async_client(
+    let client = ccos_research_lab::egress::secure_async_client(
         &validated_manifest,
         std::time::Duration::from_secs(5),
         std::time::Duration::from_secs(30),
@@ -976,7 +982,7 @@ async fn run_update(opts: &UpdateOpts) -> CliResult {
         .await
         .and_then(|r| r.error_for_status())
         .map_err(|e| CliError::fail(format!("ccos update: fetching the manifest: {e}")))?;
-    let text = ccos::egress::response_bytes_limited(response, 1024 * 1024)
+    let text = ccos_research_lab::egress::response_bytes_limited(response, 1024 * 1024)
         .await
         .map_err(|e| CliError::fail(format!("ccos update: reading the manifest: {e}")))?;
     let text = String::from_utf8(text)
@@ -1000,9 +1006,9 @@ async fn run_update(opts: &UpdateOpts) -> CliResult {
 
     // The annual, single-seat gate — enforced at update time exactly like at
     // feature time, with the same announced refusal (exit 3, never silent).
-    let now = ccos::license::now_unix();
-    let licensing = ccos::license::Licensing::detect(now);
-    let pro = matches!(licensing.tier(now), ccos::license::Tier::Pro);
+    let now = ccos_research_lab::license::now_unix();
+    let licensing = ccos_research_lab::license::Licensing::detect(now);
+    let pro = matches!(licensing.tier(now), ccos_research_lab::license::Tier::Pro);
     if manifest.tier == "pro" && !pro {
         println!(
             "\n  ✗ ccos {} is a Pro release and this machine has no active license — \
@@ -1047,7 +1053,7 @@ async fn run_update(opts: &UpdateOpts) -> CliResult {
         .validate(&manifest.url)
         .map_err(|e| CliError::fail(format!("ccos update: artifact host: {e}")))?;
     println!("  downloading  {}", manifest.url);
-    let artifact_client = ccos::egress::secure_async_client(
+    let artifact_client = ccos_research_lab::egress::secure_async_client(
         &validated_artifact,
         std::time::Duration::from_secs(5),
         std::time::Duration::from_secs(300),
@@ -1059,7 +1065,7 @@ async fn run_update(opts: &UpdateOpts) -> CliResult {
         .await
         .and_then(|r| r.error_for_status())
         .map_err(|e| CliError::fail(format!("ccos update: downloading: {e}")))?;
-    let bytes = ccos::egress::response_bytes_limited(response, 512 * 1024 * 1024)
+    let bytes = ccos_research_lab::egress::response_bytes_limited(response, 512 * 1024 * 1024)
         .await
         .map_err(|e| CliError::fail(format!("ccos update: downloading: {e}")))?;
     let got = {
@@ -1129,9 +1135,11 @@ async fn run_update(_opts: &UpdateOpts) -> CliResult {
 /// community tier `Licensing::require` has already logged the announced refusal, and this returns
 /// `None` — the caller prints a one-line note and exits 0 (announced, never an error, never a degraded
 /// core). The shared front door for the Pro CLI commands.
-fn gate_pro(feature: ccos::license::Feature) -> Option<ccos::license::Licensing> {
-    let now = ccos::license::now_unix();
-    let licensing = ccos::license::Licensing::detect(now);
+fn gate_pro(
+    feature: ccos_research_lab::license::Feature,
+) -> Option<ccos_research_lab::license::Licensing> {
+    let now = ccos_research_lab::license::now_unix();
+    let licensing = ccos_research_lab::license::Licensing::detect(now);
     licensing.require(feature, now).is_ok().then_some(licensing)
 }
 
@@ -1182,7 +1190,7 @@ fn run_tensions(opts: &TensionsOpts) -> CliResult {
             "usage: ccos tensions <snapshot.json> [--min N] [--limit N]",
         ));
     };
-    if gate_pro(ccos::license::Feature::TensionVisualization).is_none() {
+    if gate_pro(ccos_research_lab::license::Feature::TensionVisualization).is_none() {
         println!(
             "ccos tensions: locked — run `ccos license` to see how to unlock (core unaffected)."
         );
@@ -1210,7 +1218,7 @@ fn run_tensions(opts: &TensionsOpts) -> CliResult {
     for (id, q) in claims.iter().take(opts.limit) {
         println!(
             "  {}  {}",
-            ccos::memory::render_tension_bar(q),
+            ccos_research_lab::memory::render_tension_bar(q),
             truncate(&id.0, 48)
         );
     }
@@ -1257,13 +1265,13 @@ impl AuditOpts {
 /// over every asserted Q-Page claim (belief, conflict, supporting & contradicting evidence) plus the
 /// hash-chain integrity. Locked in the community tier (announced refusal; core untouched).
 fn run_audit(opts: &AuditOpts) -> CliResult {
-    use ccos::memory::EdgeType;
+    use ccos_research_lab::memory::EdgeType;
     let Some(file) = opts.snapshot.as_deref() else {
         return Err(CliError::usage(
             "usage: ccos audit <snapshot.json> [--json] [--min N]",
         ));
     };
-    let Some(licensing) = gate_pro(ccos::license::Feature::AuditReports) else {
+    let Some(licensing) = gate_pro(ccos_research_lab::license::Feature::AuditReports) else {
         println!("ccos audit: locked — run `ccos license` to see how to unlock (core unaffected).");
         return Ok(());
     };
@@ -1684,7 +1692,7 @@ fn run_sync(rest: &[String]) -> CliResult {
             };
             let raw = std::fs::read_to_string(file)
                 .map_err(|e| CliError::fail(format!("ccos sync import: read '{file}': {e}")))?;
-            let bundle = ccos::agent_session::SyncBundle::from_json(&raw)
+            let bundle = ccos_research_lab::agent_session::SyncBundle::from_json(&raw)
                 .map_err(|e| CliError::fail(format!("ccos sync import: parse '{file}': {e}")))?;
             let mut s = open(ws)?;
             let added = s
@@ -1741,7 +1749,7 @@ fn run_sync(rest: &[String]) -> CliResult {
             };
             #[cfg(feature = "signed-sync")]
             {
-                let pk = ccos::agent_session::generate_workspace_key(ws)
+                let pk = ccos_research_lab::agent_session::generate_workspace_key(ws)
                     .map_err(|e| CliError::fail(format!("ccos sync keygen: {e}")))?;
                 println!("✓ signing identity created for {ws}");
                 println!("  public key: {pk}");
@@ -1790,7 +1798,7 @@ fn run_verify(file: Option<&str>) -> CliResult {
     };
     // Workspace mode: the argument (a `workspace.ccos` file or its directory)
     // has a timeline sidecar next to it.
-    if let Some(audit) = ccos::agent_session::audit_workspace(Path::new(file)) {
+    if let Some(audit) = ccos_research_lab::agent_session::audit_workspace(Path::new(file)) {
         println!("╔══════════════════════════════════════════════╗");
         println!("║  CCOS verify — {:<30}║", truncate(file, 30));
         println!("╚══════════════════════════════════════════════╝\n");
@@ -2807,7 +2815,7 @@ fn run_experiment_cmd(args: &[String]) -> CliResult {
         "ccos-from-query",
         "ccos-region",
     ];
-    let print_table = |report: &ccos::experiment::ExperimentReport, title: &str| {
+    let print_table = |report: &ccos_research_lab::experiment::ExperimentReport, title: &str| {
         println!("  ── {title} ──");
         println!(
             "    {:<16} {:>6} {:>6} {:>6} {:>6}",
@@ -3336,7 +3344,7 @@ fn run_postmortem(args: &[String]) -> CliResult {
     let as_json = args.iter().any(|a| a == "--json");
     let path = args.iter().find(|a| !a.starts_with("--"));
     let session = match path {
-        Some(p) => match ccos::agent_session::AgentSession::open(p) {
+        Some(p) => match ccos_research_lab::agent_session::AgentSession::open(p) {
             Ok(s) => s,
             Err(e) => {
                 return Err(CliError::fail(format!(
@@ -3344,15 +3352,15 @@ fn run_postmortem(args: &[String]) -> CliResult {
                 )));
             }
         },
-        None => ccos::postmortem::demo_session(),
+        None => ccos_research_lab::postmortem::demo_session(),
     };
     if as_json {
         let ws = path.map(String::as_str).unwrap_or("(built-in demo)");
-        let record = ccos::postmortem::export(&session, ws, 4096);
+        let record = ccos_research_lab::postmortem::export(&session, ws, 4096);
         println!("{}", serde_json::to_string_pretty(&record).unwrap());
         return Ok(());
     }
-    ccos::postmortem::serve(session);
+    ccos_research_lab::postmortem::serve(session);
     Ok(())
 }
 
@@ -3438,7 +3446,7 @@ async fn run_eval_cmd(args: &[String]) -> CliResult {
         "ccos-from-query",
         "ccos-region",
     ];
-    let table = |report: &ccos::eval::EvalReport, title: &str| {
+    let table = |report: &ccos_research_lab::eval::EvalReport, title: &str| {
         println!("  ── {title} ──");
         println!(
             "    {:<16} {:>6} {:>6} {:>6} {:>6}  {:>6} {:>7} {:>7}",
@@ -3541,8 +3549,8 @@ fn truncate(s: &str, max: usize) -> String {
 /// exits non-zero when a high-severity anomaly or a flagged injection is found
 /// (handy as a pre-commit / CI gate).
 fn run_sanitize(args: &[String]) -> CliResult {
-    use ccos::injection_classifier::InjectionDetector;
-    use ccos::sanitizer::{self, Severity};
+    use ccos_research_lab::injection_classifier::InjectionDetector;
+    use ccos_research_lab::sanitizer::{self, Severity};
 
     let mut path: Option<String> = None;
     let mut as_json = false;
@@ -3652,7 +3660,7 @@ fn run_sanitize(args: &[String]) -> CliResult {
 }
 
 // ── CCOS_EXTENDED (plan P5) — unified premium CLI handlers ──────────────────
-// Thin wrappers over `ccos::mcp_ext::call_tool`, so the CLI and the MCP server
+// Thin wrappers over `ccos_research_lab::mcp_ext::call_tool`, so the CLI and the MCP server
 // expose the exact same premium surface (one implementation, one gate, one
 // refusal text). A Pro-gate refusal prints the tool's visible message and exits
 // 3; malformed arguments exit 2.
@@ -3660,7 +3668,7 @@ fn run_sanitize(args: &[String]) -> CliResult {
 /// Run one premium tool against `session` and print its content blocks.
 #[cfg(any(feature = "slhav2-full", feature = "octacore", feature = "rsi"))]
 fn premium_tool_call(session: &mut AgentSession, tool: &str, args: serde_json::Value) -> CliResult {
-    match ccos::mcp_ext::call_tool(session, tool, &args) {
+    match ccos_research_lab::mcp_ext::call_tool(session, tool, &args) {
         Ok(v) => {
             for block in v
                 .get("content")
@@ -3688,7 +3696,9 @@ fn premium_tool_call(session: &mut AgentSession, tool: &str, args: serde_json::V
 #[cfg(any(feature = "slhav2-full", feature = "rsi"))]
 fn licensed_session() -> AgentSession {
     let mut s = AgentSession::new();
-    s.set_licensing(ccos::license::Licensing::detect(ccos::license::now_unix()));
+    s.set_licensing(ccos_research_lab::license::Licensing::detect(
+        ccos_research_lab::license::now_unix(),
+    ));
     s
 }
 
@@ -3909,8 +3919,8 @@ EXAMPLES:\n\
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ccos::external_memory::RecallItem;
-    use ccos::trace::TraceHit;
+    use ccos_research_lab::external_memory::RecallItem;
+    use ccos_research_lab::trace::TraceHit;
 
     /// Build an owned `Vec<String>` arg list from string literals.
     fn argv(a: &[&str]) -> Vec<String> {

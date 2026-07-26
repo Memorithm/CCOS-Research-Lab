@@ -13,8 +13,8 @@
 //!
 //! Run: `cargo run --release --example method_crux`
 
-use ccos::external_memory::{CcosMemory, ExternalMemory};
-use ccos::memory::EdgeType;
+use ccos_research_lab::external_memory::{CcosMemory, ExternalMemory};
+use ccos_research_lab::memory::EdgeType;
 
 fn main() {
     let files: &[(&str, &str)] = &[

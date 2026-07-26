@@ -10,9 +10,9 @@
 //!
 //! Run: `cargo run --release --example resolution_coverage`
 
-use ccos::external_memory::{CcosMemory, ExternalMemory};
-use ccos::memory::EdgeType;
-use ccos::parser::ASTParser;
+use ccos_research_lab::external_memory::{CcosMemory, ExternalMemory};
+use ccos_research_lab::memory::EdgeType;
+use ccos_research_lab::parser::ASTParser;
 use std::fs;
 use std::path::{Path, PathBuf};
 

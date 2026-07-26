@@ -1,5 +1,5 @@
 //! **Adaptive retrieval — the improvement loop learns a cross-vocabulary mapping from feedback.**
-//! The premium tier of `ccos::retrieval` (gated behind CCOS's own #29 license, `Feature::AdaptiveRetrieval`).
+//! The premium tier of `ccos_research_lab::retrieval` (gated behind CCOS's own #29 license, `Feature::AdaptiveRetrieval`).
 //!
 //! Setup: a deliberate **vocabulary gap** — `n` (query, relevant-doc) pairs whose terms are *disjoint*
 //! (queries live in dimensions `[0, n)`, docs in `[n, 2n)`), so neither lexical nor dense retrieval can
@@ -12,9 +12,9 @@
 //!
 //! Run: `cargo run --release --example retrieval_improvement`
 
-use ccos::license::{License, Licensing};
-use ccos::retrieval::feedback::ContrastiveConfig;
-use ccos::retrieval::RetrievalAccess;
+use ccos_research_lab::license::{License, Licensing};
+use ccos_research_lab::retrieval::feedback::ContrastiveConfig;
+use ccos_research_lab::retrieval::RetrievalAccess;
 
 fn main() {
     println!("# Adaptive retrieval — the improvement loop learns a cross-vocabulary mapping\n");
@@ -70,10 +70,10 @@ fn main() {
         loop_.record(&query(i), &doc(i));
     }
 
-    let r1 = |l: &ccos::retrieval::feedback::ImprovementLoop| {
+    let r1 = |l: &ccos_research_lab::retrieval::feedback::ImprovementLoop| {
         100.0 * l.evaluate_recall_at_k(&eval, &corpus, 1)
     };
-    let r3 = |l: &ccos::retrieval::feedback::ImprovementLoop| {
+    let r3 = |l: &ccos_research_lab::retrieval::feedback::ImprovementLoop| {
         100.0 * l.evaluate_recall_at_k(&eval, &corpus, 3)
     };
 

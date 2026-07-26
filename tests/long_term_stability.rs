@@ -1,6 +1,6 @@
-use ccos::event_log::{EventLog, EventPayload, EventType};
-use ccos::incremental::IncrementalGraphEngine;
-use ccos::memory::{MemoryGraph, NodeId};
+use ccos_research_lab::event_log::{EventLog, EventPayload, EventType};
+use ccos_research_lab::incremental::IncrementalGraphEngine;
+use ccos_research_lab::memory::{MemoryGraph, NodeId};
 use std::time::Instant;
 
 const NUM_CYCLES: usize = 10_000;

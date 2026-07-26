@@ -15,11 +15,11 @@
 
 #![cfg(feature = "slhav2-full")]
 
-use ccos::license::{Feature, License, LicenseError, Licensing};
-use ccos::slha_full::FullSlhaAccess;
 use ccos_memory_runtime::telemetry::{MemoryBackend, MemoryState};
 use ccos_memory_runtime::traits::MemoryProvider;
 use ccos_memory_runtime::{AlignedMemoryPage, AlignedPayload};
+use ccos_research_lab::license::{Feature, License, LicenseError, Licensing};
+use ccos_research_lab::slha_full::FullSlhaAccess;
 use ccos_scirust::attention::slha_v2::{quantize_latent_grouped, D_C, FLAG_WARM, RESIDUAL_WORDS};
 use ccos_scirust::ccos::{EvictionPolicy, HOT_BYTES, WARM_BYTES};
 use ccos_scirust::safety::SafetyResult;
@@ -74,7 +74,7 @@ fn community_tier_refuses_full_kernel_no_silent_downgrade() {
     // No license at all ⇒ NoLicense path when no verifier is supplied.
     assert_eq!(
         Licensing::community().tier(NOW),
-        ccos::license::Tier::Community
+        ccos_research_lab::license::Tier::Community
     );
 }
 

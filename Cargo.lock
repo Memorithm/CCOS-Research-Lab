@@ -193,7 +193,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "ccos"
+name = "ccos-license-server"
+version = "0.1.0"
+dependencies = [
+ "ccos-research-lab",
+ "ed25519-dalek",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "ccos-memory-runtime"
+version = "0.1.0"
+dependencies = [
+ "scirust",
+]
+
+[[package]]
+name = "ccos-research-lab"
 version = "0.4.0"
 dependencies = [
  "ccos-memory-runtime",
@@ -217,25 +236,6 @@ dependencies = [
  "syn 2.0.118",
  "tokio",
  "uuid",
-]
-
-[[package]]
-name = "ccos-license-server"
-version = "0.1.0"
-dependencies = [
- "ccos",
- "ed25519-dalek",
- "rand 0.8.6",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "ccos-memory-runtime"
-version = "0.1.0"
-dependencies = [
- "scirust",
 ]
 
 [[package]]

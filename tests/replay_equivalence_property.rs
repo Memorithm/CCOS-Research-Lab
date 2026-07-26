@@ -11,9 +11,9 @@
 //! The default resident cap is 5000, far above these small graphs, so nothing
 //! demotes to COLD and the resident-state hash covers the whole graph.
 
-use ccos::agent_session::AgentSession;
-use ccos::external_memory::Recall;
-use ccos::memory::{MemoryGraph, NodeId};
+use ccos_research_lab::agent_session::AgentSession;
+use ccos_research_lab::external_memory::Recall;
+use ccos_research_lab::memory::{MemoryGraph, NodeId};
 use proptest::prelude::*;
 use sha2::{Digest, Sha256};
 
@@ -38,7 +38,7 @@ fn graph_hash(graph: &MemoryGraph) -> String {
         }
     }
 
-    let mut edges: Vec<&ccos::memory::GraphEdge> = graph.edges().iter().collect();
+    let mut edges: Vec<&ccos_research_lab::memory::GraphEdge> = graph.edges().iter().collect();
     edges.sort_by(|a, b| {
         a.source
             .0

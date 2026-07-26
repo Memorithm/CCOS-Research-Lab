@@ -1,3 +1,22 @@
+# CCOS Research Lab
+
+> ⚠️ **Experimental research environment.**
+> **Outside the certifiable CCOS Core and CCOS Enterprise product boundary.**
+>
+> ⚠️ **Environnement de recherche expérimental.**
+> **Hors du périmètre certifiable de CCOS Core et CCOS Enterprise.**
+>
+> This repository contains RSI (recursive self-improvement), Forge
+> (candidate generation / mutation / patch promotion), sandboxed
+> generated-code execution, the SLHAv2/scirust kernels, vendored
+> OctaSoma/OctaCore, and experimental cognitive mechanisms. Nothing here is
+> certified, production-ready, or evidence for CCOS Core claims (§6 of the
+> product charter). Stable, auditable cognitive infrastructure lives in
+> [CCOS Core](https://github.com/Memorithm/CCOS-Core); governance and
+> multi-tenancy in [CCOS Enterprise](https://github.com/Memorithm/CCOS-Enterprise).
+>
+> Sole human maintainer: **ZEKRITI Tarek** (see GOVERNANCE.md).
+
 # CCOS — Causal Context Operating System
 
 > A local, deterministic **cognitive MMU** for LLM coding agents: it keeps the

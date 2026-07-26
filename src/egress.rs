@@ -602,8 +602,8 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
             for response in [
-                "HTTP/1.1 302 Found\r\nLocation: https://example.com/\r\nContent-Length: 0\r\n\r\n",
-                "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n12345",
+                "HTTP/1.1 302 Found\r\nLocation: https://example.com/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n12345",
             ] {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut request = [0u8; 1024];

@@ -2,7 +2,7 @@
 //! circular-dependency inversion.
 //!
 //! Before P2, `octacore` had an optional git dependency on CCOS and an
-//! `ccos_adapter::CcosScope` that wrapped `ccos::external_memory::ExternalMemory`
+//! `ccos_adapter::CcosScope` that wrapped `ccos_research_lab::external_memory::ExternalMemory`
 //! into `octacore::CausalScope`. That edge pointed `octacore → ccos`, and since
 //! CCOS_EXTENDED makes `octacore` a workspace member of the `ccos` workspace, it was
 //! circular. P2 **inverts** it: the adapter now lives here, on the CCOS side, so

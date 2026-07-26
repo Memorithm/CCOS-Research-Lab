@@ -6,9 +6,9 @@
 //! `llm` feature with the module.
 #![cfg(feature = "llm")]
 
-use ccos::incremental::IncrementalGraphEngine;
-use ccos::memory::MemoryGraph;
-use ccos::workspace::WorkspaceScanner;
+use ccos_research_lab::incremental::IncrementalGraphEngine;
+use ccos_research_lab::memory::MemoryGraph;
+use ccos_research_lab::workspace::WorkspaceScanner;
 use std::path::PathBuf;
 
 fn temp_workspace(tag: &str) -> PathBuf {

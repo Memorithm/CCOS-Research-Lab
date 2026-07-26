@@ -15,9 +15,9 @@
 //!
 //! Run: `cargo run --release --example sync_crux` — deterministic; two runs print the same bytes.
 
-use ccos::agent_session::{AgentSession, SyncBundle, SyncError};
-use ccos::external_memory::CcosMemory;
-use ccos::memory::EdgeType;
+use ccos_research_lab::agent_session::{AgentSession, SyncBundle, SyncError};
+use ccos_research_lab::external_memory::CcosMemory;
+use ccos_research_lab::memory::EdgeType;
 
 /// Bit-exact fingerprint of the replayable state — graph, sources, and both logs'
 /// chain heads (`CcosMemory::state_fingerprint`, the store's official convergence check).

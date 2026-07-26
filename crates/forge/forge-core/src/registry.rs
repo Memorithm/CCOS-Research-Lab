@@ -42,9 +42,9 @@ impl AlgorithmRegistry {
             ForgeError::Evaluation(format!("Échec de l'insertion transactionnelle: {e}"))
         })?;
 
-        self.db.flush().map_err(|e| {
-            ForgeError::Evaluation(format!("Échec du flush matériel: {e}"))
-        })?;
+        self.db
+            .flush()
+            .map_err(|e| ForgeError::Evaluation(format!("Échec du flush matériel: {e}")))?;
 
         Ok(())
     }
@@ -54,12 +54,15 @@ impl AlgorithmRegistry {
         let key = id.to_be_bytes();
         match self.db.get(key) {
             Ok(Some(bytes)) => {
-                let record: GenerationRecord = serde_json::from_slice(&bytes)
-                    .map_err(|e| ForgeError::Evaluation(format!("Données de registre corrompues: {e}")))?;
+                let record: GenerationRecord = serde_json::from_slice(&bytes).map_err(|e| {
+                    ForgeError::Evaluation(format!("Données de registre corrompues: {e}"))
+                })?;
                 Ok(Some(record))
             }
             Ok(None) => Ok(None),
-            Err(e) => Err(ForgeError::Evaluation(format!("Erreur d'accès à Sled DB: {e}"))),
+            Err(e) => Err(ForgeError::Evaluation(format!(
+                "Erreur d'accès à Sled DB: {e}"
+            ))),
         }
     }
 
@@ -76,20 +79,21 @@ impl AlgorithmRegistry {
 
     /// Commit brut (clé + payload arbitraire) pour le checkpointing moteur.
     pub fn commit_raw(&self, key: &[u8], payload: &[u8]) -> Result<()> {
-        self.db.insert(key, payload).map_err(|e| {
-            ForgeError::Evaluation(format!("Échec commit_raw Sled: {e}"))
-        })?;
-        self.db.flush().map_err(|e| {
-            ForgeError::Evaluation(format!("Échec flush commit_raw: {e}"))
-        })?;
+        self.db
+            .insert(key, payload)
+            .map_err(|e| ForgeError::Evaluation(format!("Échec commit_raw Sled: {e}")))?;
+        self.db
+            .flush()
+            .map_err(|e| ForgeError::Evaluation(format!("Échec flush commit_raw: {e}")))?;
         Ok(())
     }
 
     /// Récupère un payload brut par clé.
     pub fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        self.db.get(key).map(|opt| opt.map(|ivec| ivec.to_vec())).map_err(|e| {
-            ForgeError::Evaluation(format!("Erreur get_raw Sled: {e}"))
-        })
+        self.db
+            .get(key)
+            .map(|opt| opt.map(|ivec| ivec.to_vec()))
+            .map_err(|e| ForgeError::Evaluation(format!("Erreur get_raw Sled: {e}")))
     }
 
     /// Nombre total d'enregistrements.

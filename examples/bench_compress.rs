@@ -1,6 +1,6 @@
-use ccos::agent_session::AgentSession;
-use ccos::compressor::CausalCompressor;
-use ccos::external_memory::Recall;
+use ccos_research_lab::agent_session::AgentSession;
+use ccos_research_lab::compressor::CausalCompressor;
+use ccos_research_lab::external_memory::Recall;
 
 fn ingest_corpus() -> (AgentSession, Vec<(String, String)>) {
     // Derive the corpus path from the crate root so the example runs from any
@@ -27,7 +27,7 @@ fn ingest_corpus() -> (AgentSession, Vec<(String, String)>) {
     (s, files)
 }
 
-fn tokens_of(win: &ccos::external_memory::RecallWindow) -> usize {
+fn tokens_of(win: &ccos_research_lab::external_memory::RecallWindow) -> usize {
     win.items
         .iter()
         .map(|i| i.content.chars().count() / 4)

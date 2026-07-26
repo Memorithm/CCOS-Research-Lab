@@ -65,8 +65,7 @@ impl EvaluationCache {
         let file = File::create(&tmp_path)?;
         let mut writer = BufWriter::new(file);
 
-        serde_json::to_writer(&mut writer, &*reader)
-            .map_err(std::io::Error::other)?;
+        serde_json::to_writer(&mut writer, &*reader).map_err(std::io::Error::other)?;
 
         writer.into_inner()?.sync_all()?;
         std::fs::rename(tmp_path, &self.persistent_path)?;
@@ -77,7 +76,6 @@ impl EvaluationCache {
         let mut file = File::open(path)?;
         let mut content = String::new();
         file.read_to_string(&mut content)?;
-        serde_json::from_str(&content)
-            .map_err(std::io::Error::other)
+        serde_json::from_str(&content).map_err(std::io::Error::other)
     }
 }

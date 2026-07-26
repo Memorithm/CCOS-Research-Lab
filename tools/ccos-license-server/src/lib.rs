@@ -16,7 +16,7 @@
 //! - a compromised counter can refuse service or issue tokens for codes it
 //!   holds, but every issued token is verified by the client against the
 //!   public key baked into the client's binary, and runtime verification
-//!   ([`ccos::license`]) stays fully offline — the counter is a fulfillment
+//!   ([`ccos_research_lab::license`]) stays fully offline — the counter is a fulfillment
 //!   convenience, never a runtime dependency. See `docs/LICENSING_SERVER.md`
 //!   for the deployment runbook and the honest threat model (the signing seed
 //!   lives in this process's environment; rotate the keypair at a release if
@@ -121,7 +121,7 @@ impl Vault {
     /// *before* the token is disclosed).
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let pretty = serde_json::to_string_pretty(self).expect("vault serializes");
-        ccos::util::write_durable(path, format!("{pretty}\n").as_bytes())
+        ccos_research_lab::util::write_durable(path, format!("{pretty}\n").as_bytes())
     }
 
     /// The claim state machine (pure — persistence and signing are the
@@ -214,7 +214,7 @@ impl Counter {
     pub fn handle(&mut self, method: &str, path: &str, body: &str, now: u64) -> (u16, String) {
         match (method, path) {
             ("GET", "/healthz") => (200, r#"{"ok":true}"#.to_string()),
-            ("POST", ccos::claim::CLAIM_PATH) => self.handle_claim(body, now),
+            ("POST", ccos_research_lab::claim::CLAIM_PATH) => self.handle_claim(body, now),
             ("POST", _) | ("GET", _) => (404, err_body("no such endpoint")),
             _ => (405, err_body("method not allowed")),
         }
@@ -224,12 +224,12 @@ impl Counter {
         if !self.bucket.allow() {
             return (429, err_body("rate limited — try again shortly"));
         }
-        let Ok(req) = serde_json::from_str::<ccos::claim::ClaimRequest>(body) else {
+        let Ok(req) = serde_json::from_str::<ccos_research_lab::claim::ClaimRequest>(body) else {
             return (400, err_body("malformed claim request"));
         };
-        if req.schema != ccos::claim::CLAIM_SCHEMA
-            || !ccos::claim::is_sha256_hex(&req.code_hash)
-            || !ccos::claim::is_sha256_hex(&req.machine)
+        if req.schema != ccos_research_lab::claim::CLAIM_SCHEMA
+            || !ccos_research_lab::claim::is_sha256_hex(&req.code_hash)
+            || !ccos_research_lab::claim::is_sha256_hex(&req.machine)
         {
             return (400, err_body("malformed claim request"));
         }
@@ -242,15 +242,19 @@ impl Counter {
                     eprintln!("[counter] persist FAILED, claim refused: {e}");
                     return (500, err_body("persistence failure — nothing was issued"));
                 }
-                let token =
-                    ccos::license::sign_token_bound(&self.seed, &licensee, exp, Some(&req.machine));
+                let token = ccos_research_lab::license::sign_token_bound(
+                    &self.seed,
+                    &licensee,
+                    exp,
+                    Some(&req.machine),
+                );
                 eprintln!(
                     "[counter] issued: code={}… licensee={licensee} exp={exp:?}",
                     &req.code_hash[..12]
                 );
                 (
                     200,
-                    serde_json::to_string(&ccos::claim::ClaimOk { token })
+                    serde_json::to_string(&ccos_research_lab::claim::ClaimOk { token })
                         .expect("response serializes"),
                 )
             }
@@ -277,7 +281,7 @@ impl Counter {
 }
 
 fn err_body(msg: &str) -> String {
-    serde_json::to_string(&ccos::claim::ClaimErr {
+    serde_json::to_string(&ccos_research_lab::claim::ClaimErr {
         error: msg.to_string(),
     })
     .expect("error serializes")
@@ -295,9 +299,12 @@ pub fn serve(listener: TcpListener, mut counter: Counter) -> io::Result<()> {
         let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
         let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
         let (status, body) = match read_request(&mut stream) {
-            Some((method, path, body)) => {
-                counter.handle(&method, &path, &body, ccos::license::now_unix())
-            }
+            Some((method, path, body)) => counter.handle(
+                &method,
+                &path,
+                &body,
+                ccos_research_lab::license::now_unix(),
+            ),
             None => (400, err_body("malformed request")),
         };
         let _ = write_response(&mut stream, status, &body);
@@ -358,7 +365,7 @@ fn write_response(stream: &mut TcpStream, status: u16, body: &str) -> io::Result
 /// Parse a 64-hex signing seed (the `CCOS_LICENSE_SIGNING_SEED` format shared
 /// with the `license_sign` example) into key bytes.
 pub fn parse_seed(hex: &str) -> Option<[u8; 32]> {
-    ccos::util::from_hex32(hex.trim())
+    ccos_research_lab::util::from_hex32(hex.trim())
 }
 
 #[cfg(test)]
@@ -369,8 +376,8 @@ mod tests {
     const SEED: [u8; 32] = [7u8; 32];
 
     fn vault_with_code() -> (Vault, String) {
-        let code = ccos::claim::code_from_entropy(&[42; 16]);
-        let hash = ccos::claim::code_hash(&code);
+        let code = ccos_research_lab::claim::code_from_entropy(&[42; 16]);
+        let hash = ccos_research_lab::claim::code_hash(&code);
         let mut vault = Vault::new();
         vault.entries.insert(
             hash.clone(),
@@ -389,7 +396,7 @@ mod tests {
     }
 
     fn fp(id: &str) -> String {
-        ccos::claim::machine_fingerprint_of(id)
+        ccos_research_lab::claim::machine_fingerprint_of(id)
     }
 
     #[test]
@@ -448,8 +455,8 @@ mod tests {
     }
 
     fn claim_body(hash: &str, machine: &str) -> String {
-        serde_json::to_string(&ccos::claim::ClaimRequest {
-            schema: ccos::claim::CLAIM_SCHEMA.into(),
+        serde_json::to_string(&ccos_research_lab::claim::ClaimRequest {
+            schema: ccos_research_lab::claim::CLAIM_SCHEMA.into(),
             code_hash: hash.into(),
             machine: machine.into(),
         })
@@ -465,13 +472,13 @@ mod tests {
 
         let (status, body) = c.handle("POST", "/claim", &claim_body(&hash, &fp("m1")), NOW);
         assert_eq!(status, 200, "{body}");
-        let ok: ccos::claim::ClaimOk = serde_json::from_str(&body).unwrap();
+        let ok: ccos_research_lab::claim::ClaimOk = serde_json::from_str(&body).unwrap();
 
         // The issued token verifies against the seed's public half and carries
         // the machine binding + expiry the vault fixed.
         let pk = SigningKey::from_bytes(&SEED).verifying_key().to_bytes();
-        let v = ccos::license::Ed25519Verifier::with_public_key(&pk);
-        use ccos::license::LicenseVerifier;
+        let v = ccos_research_lab::license::Ed25519Verifier::with_public_key(&pk);
+        use ccos_research_lab::license::LicenseVerifier;
         let lic = v.verify(ok.token.as_bytes(), NOW).expect("verifies");
         assert_eq!(lic.licensee, "Acme Corp");
         assert_eq!(lic.machine.as_deref(), Some(fp("m1").as_str()));

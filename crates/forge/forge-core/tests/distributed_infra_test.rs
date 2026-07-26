@@ -16,9 +16,9 @@ use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use forge_core::{Candidate, CandidateId};
 use forge_core::evaluate_parallel_distributed;
 use forge_core::protocol::{EvaluationPayload, EvaluationResult};
+use forge_core::{Candidate, CandidateId};
 use forge_core::{Individual, Trial};
 
 // ---------------------------------------------------------------------------
@@ -66,9 +66,7 @@ fn evaluate_stub(payload: &EvaluationPayload) -> EvaluationResult {
             candidate_id: payload.candidate_id,
             is_valid: false,
             objectives: vec![],
-            error_message: Some(
-                "Timeout dépassé : boucle infinie détectée, processus tué.".into(),
-            ),
+            error_message: Some("Timeout dépassé : boucle infinie détectée, processus tué.".into()),
         }
     } else {
         // Candidat valide — objectifs simulés
@@ -107,9 +105,7 @@ fn test_distributed_evolution_under_stress() {
         };
 
         // Non-bloquant pour permettre l'arrêt propre
-        listener
-            .set_nonblocking(true)
-            .expect("set_nonblocking");
+        listener.set_nonblocking(true).expect("set_nonblocking");
 
         // Signale que le worker est prêt
         b.wait();
@@ -123,12 +119,8 @@ fn test_distributed_evolution_under_stress() {
                 Ok((mut stream, _peer)) => {
                     // Une tâche par connexion pour la concurrence
                     thread::spawn(move || {
-                        stream
-                            .set_read_timeout(Some(Duration::from_secs(10)))
-                            .ok();
-                        stream
-                            .set_write_timeout(Some(Duration::from_secs(10)))
-                            .ok();
+                        stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
+                        stream.set_write_timeout(Some(Duration::from_secs(10))).ok();
 
                         let payload: EvaluationPayload =
                             match bincode::deserialize_from(&mut stream) {
@@ -149,9 +141,7 @@ fn test_distributed_evolution_under_stress() {
                     thread::sleep(Duration::from_millis(5));
                 }
                 Err(err) => {
-                    e.lock()
-                        .unwrap()
-                        .push(format!("accept error: {err}"));
+                    e.lock().unwrap().push(format!("accept error: {err}"));
                     break;
                 }
             }
@@ -300,15 +290,8 @@ fn test_distributed_worker_unreachable_is_resilient() {
     };
     let failure_sink = Mutex::new(Vec::new());
 
-    let individuals: Vec<Individual<StubCandidate>> = evaluate_parallel_distributed(
-        &population,
-        &workers,
-        &trial,
-        None,
-        None,
-        0,
-        &failure_sink,
-    );
+    let individuals: Vec<Individual<StubCandidate>> =
+        evaluate_parallel_distributed(&population, &workers, &trial, None, None, 0, &failure_sink);
 
     // Tous les candidats doivent revenir (marqués invalides)
     assert_eq!(individuals.len(), 5);
@@ -391,25 +374,15 @@ fn test_round_robin_distribution() {
 
     // Simuler 2 workers (même adresse pour le test — dans la pratique ce
     // seraient des machines différentes)
-    let workers = vec![
-        "127.0.0.1:19997".to_string(),
-        "127.0.0.1:19997".to_string(),
-    ];
+    let workers = vec!["127.0.0.1:19997".to_string(), "127.0.0.1:19997".to_string()];
     let trial = Trial {
         generation: 0,
         seed: 42,
     };
     let failure_sink = Mutex::new(Vec::new());
 
-    let individuals: Vec<Individual<StubCandidate>> = evaluate_parallel_distributed(
-        &population,
-        &workers,
-        &trial,
-        None,
-        None,
-        0,
-        &failure_sink,
-    );
+    let individuals: Vec<Individual<StubCandidate>> =
+        evaluate_parallel_distributed(&population, &workers, &trial, None, None, 0, &failure_sink);
 
     assert_eq!(individuals.len(), 10);
     // Tous valides

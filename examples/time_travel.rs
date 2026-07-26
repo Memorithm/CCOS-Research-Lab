@@ -7,8 +7,8 @@
 //! session is event-sourced, so the exact context an agent saw at any step is
 //! reconstructible, and a recall can be replayed counterfactually.
 
-use ccos::agent_session::AgentSession;
-use ccos::external_memory::{ExternalMemory, Recall, RecallWindow};
+use ccos_research_lab::agent_session::AgentSession;
+use ccos_research_lab::external_memory::{ExternalMemory, Recall, RecallWindow};
 
 /// A causal chain api → repo → db (the bug lives in db), plus unrelated noise.
 const WORKSPACE: &[(&str, &str)] = &[

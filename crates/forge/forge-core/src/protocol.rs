@@ -75,9 +75,8 @@ pub fn dispatch_evaluation_to_worker(
         .parse()
         .map_err(|e| ForgeError::Evaluation(format!("Adresse worker invalide '{addr}': {e}")))?;
 
-    let mut stream = TcpStream::connect_timeout(&socket_addr, timeout).map_err(|e| {
-        ForgeError::Evaluation(format!("Connexion worker perdue ({addr}): {e}"))
-    })?;
+    let mut stream = TcpStream::connect_timeout(&socket_addr, timeout)
+        .map_err(|e| ForgeError::Evaluation(format!("Connexion worker perdue ({addr}): {e}")))?;
 
     stream
         .set_read_timeout(Some(timeout))
@@ -96,10 +95,8 @@ pub fn dispatch_evaluation_to_worker(
         .map_err(|e| ForgeError::Evaluation(format!("Échec flush socket: {e}")))?;
 
     // Désérialisation binaire de la réponse
-    let result: EvaluationResult =
-        bincode::deserialize_from(&mut stream).map_err(|e| {
-            ForgeError::Evaluation(format!("Payload corrompu du worker: {e}"))
-        })?;
+    let result: EvaluationResult = bincode::deserialize_from(&mut stream)
+        .map_err(|e| ForgeError::Evaluation(format!("Payload corrompu du worker: {e}")))?;
 
     Ok(result)
 }
@@ -123,8 +120,7 @@ mod tests {
         };
 
         let bytes = bincode::serialize(&payload).expect("sérialisation");
-        let recovered: EvaluationPayload =
-            bincode::deserialize(&bytes).expect("désérialisation");
+        let recovered: EvaluationPayload = bincode::deserialize(&bytes).expect("désérialisation");
 
         assert_eq!(recovered.candidate_id, payload.candidate_id);
         assert_eq!(recovered.source_code, payload.source_code);
@@ -142,8 +138,7 @@ mod tests {
         };
 
         let bytes = bincode::serialize(&res).expect("sérialisation");
-        let recovered: EvaluationResult =
-            bincode::deserialize(&bytes).expect("désérialisation");
+        let recovered: EvaluationResult = bincode::deserialize(&bytes).expect("désérialisation");
 
         assert_eq!(recovered.candidate_id, res.candidate_id);
         assert!(recovered.is_valid);
@@ -161,8 +156,7 @@ mod tests {
         };
 
         let bytes = bincode::serialize(&res).expect("sérialisation");
-        let recovered: EvaluationResult =
-            bincode::deserialize(&bytes).expect("désérialisation");
+        let recovered: EvaluationResult = bincode::deserialize(&bytes).expect("désérialisation");
 
         assert!(!recovered.is_valid);
         assert_eq!(
@@ -179,11 +173,8 @@ mod tests {
             seed: 0,
             generation: 0,
         };
-        let result = dispatch_evaluation_to_worker(
-            "invalid-addr",
-            &payload,
-            Duration::from_secs(1),
-        );
+        let result =
+            dispatch_evaluation_to_worker("invalid-addr", &payload, Duration::from_secs(1));
         assert!(result.is_err());
     }
 }

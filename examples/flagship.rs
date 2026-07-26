@@ -18,11 +18,11 @@
 //!
 //! Run: `cargo run --release --example flagship`
 
-use ccos::agent_session::AgentSession;
-use ccos::embeddings::{tokenize, TfidfEmbedder};
-use ccos::external_memory::{ExternalMemory, Recall};
-use ccos::memory::NodeId;
-use ccos::retrieval::{metrics, CcosEncoder, Encoder, LsaEncoder, SemanticRetriever};
+use ccos_research_lab::agent_session::AgentSession;
+use ccos_research_lab::embeddings::{tokenize, TfidfEmbedder};
+use ccos_research_lab::external_memory::{ExternalMemory, Recall};
+use ccos_research_lab::memory::NodeId;
+use ccos_research_lab::retrieval::{metrics, CcosEncoder, Encoder, LsaEncoder, SemanticRetriever};
 use std::collections::HashSet;
 
 /// A tiny scheduler service: a causal chain api → repo → db (the deadline bug lives in db.rs).

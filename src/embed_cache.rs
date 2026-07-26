@@ -11,7 +11,7 @@
 //! [`octasoma::Embedder`] benefits without new API:
 //!
 //! ```no_run
-//! use ccos::embed_cache::CachedEmbedder;
+//! use ccos_research_lab::embed_cache::CachedEmbedder;
 //! use octasoma::HashEmbedder;
 //!
 //! // Wrap ANY embedder; identical inputs are embedded once.
