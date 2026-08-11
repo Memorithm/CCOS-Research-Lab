@@ -68,7 +68,7 @@ ccos-sandbox = { path = "../ccos-sandbox" }
 forge-core = { path = "../forge/forge-core", optional = true }
 # Canonical OctaSoma source, pinned to the same reviewed revision as the
 # Research root and OctaCore so RSI cannot reactivate the historical vendor.
-octasoma = { git = "https://github.com/Memorithm/octasoma", rev = "513cad43cb430b0e898330d67ea34ccfcd305b88", default-features = false, optional = true }
+octasoma = { git = "https://github.com/Memorithm/octasoma", rev = "145761aeb52ef8ded85dcf2b8c97690005284926", default-features = false, optional = true }
 rand = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 scirust-rsi = { git = "https://github.com/Memorithm/scirust", rev = "5c7e43b399d3247d68a957faf5e13f147e48a7ef", optional = true }
