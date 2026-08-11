@@ -33,25 +33,35 @@ impl SwarmAuditLog {
         }
     }
 
-    /// Consume only events not seen before.  The orchestrator's logical sequence
-    /// must be gap-free; a missing/reordered event fails closed instead of being
-    /// silently accepted into the audit chain.
+    /// Consume only events not seen before. The complete pending suffix is
+    /// sequence-validated before the hash chain is mutated, so a gap/reordering
+    /// fails closed without leaving a partially ingested batch.
     pub fn ingest(&mut self, events: &[SwarmEvent]) -> Result<usize, SwarmAuditError> {
-        let mut added = 0usize;
-        for event in events.iter().filter(|event| event.seq > self.last_seq) {
-            let expected = self.last_seq.saturating_add(1);
+        let last_seq = self.last_seq;
+        let pending: Vec<&SwarmEvent> = events
+            .iter()
+            .filter(|event| event.seq > last_seq)
+            .collect();
+
+        let mut expected = last_seq.saturating_add(1);
+        for event in &pending {
             if event.seq != expected {
                 return Err(SwarmAuditError::SequenceGap {
                     expected,
                     got: event.seq,
                 });
             }
+            expected = expected.saturating_add(1);
+        }
+
+        for event in &pending {
             self.log
                 .record_custom("rsi_swarm", canonical_swarm_payload(event));
-            self.last_seq = event.seq;
-            added += 1;
         }
-        Ok(added)
+        if let Some(last) = pending.last() {
+            self.last_seq = last.seq;
+        }
+        Ok(pending.len())
     }
 
     /// Convenience synchronization from a live orchestrator.
@@ -193,20 +203,27 @@ mod tests {
     }
 
     #[test]
-    fn sequence_gap_fails_closed() {
+    fn sequence_gap_fails_closed_without_partial_batch() {
         let mut audit = SwarmAuditLog::new();
-        let events = vec![SwarmEvent {
-            seq: 2,
-            message: SwarmMessage::Shutdown { unit: UnitId(9) },
-        }];
+        let events = vec![
+            SwarmEvent {
+                seq: 1,
+                message: SwarmMessage::Shutdown { unit: UnitId(8) },
+            },
+            SwarmEvent {
+                seq: 3,
+                message: SwarmMessage::Shutdown { unit: UnitId(9) },
+            },
+        ];
         assert_eq!(
             audit.ingest(&events),
             Err(SwarmAuditError::SequenceGap {
-                expected: 1,
-                got: 2,
+                expected: 2,
+                got: 3,
             })
         );
         assert!(audit.is_empty());
+        assert_eq!(audit.last_seq(), 0);
     }
 
     #[test]
