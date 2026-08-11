@@ -36,10 +36,8 @@ impl CcosSwarmAudit {
     /// reordering fail closed before CCOS's log is mutated.
     pub fn ingest(&mut self, events: &[SwarmEvent]) -> Result<usize, CcosSwarmAuditError> {
         let last_seq = self.last_seq;
-        let pending: Vec<&SwarmEvent> = events
-            .iter()
-            .filter(|event| event.seq > last_seq)
-            .collect();
+        let pending: Vec<&SwarmEvent> =
+            events.iter().filter(|event| event.seq > last_seq).collect();
 
         let mut expected = last_seq.saturating_add(1);
         for event in &pending {
@@ -67,10 +65,7 @@ impl CcosSwarmAudit {
         Ok(pending.len())
     }
 
-    pub fn sync(
-        &mut self,
-        orchestrator: &CervoOrchestrator,
-    ) -> Result<usize, CcosSwarmAuditError> {
+    pub fn sync(&mut self, orchestrator: &CervoOrchestrator) -> Result<usize, CcosSwarmAuditError> {
         self.ingest(orchestrator.events())
     }
 
@@ -123,12 +118,8 @@ mod tests {
             max_source_rpn: f64::MAX,
         })
         .unwrap();
-        orchestrator
-            .spawn(UnitId(11), RSIAgent::demo(101))
-            .unwrap();
-        orchestrator
-            .spawn(UnitId(22), RSIAgent::demo(202))
-            .unwrap();
+        orchestrator.spawn(UnitId(11), RSIAgent::demo(101)).unwrap();
+        orchestrator.spawn(UnitId(22), RSIAgent::demo(202)).unwrap();
         orchestrator
     }
 
