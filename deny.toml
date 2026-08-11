@@ -52,6 +52,7 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
     "https://github.com/Memorithm/scirust",
+    "https://github.com/Memorithm/octasoma",
 ]
 
 [sources.allow-org]
