@@ -17,4 +17,15 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Audit Cargo.lock
-        run: cargo audit --json | tee rustsec-audit.json
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo audit --json | tee rustsec-audit.json || true
+      - name: Reverse dependency paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pkg in pyo3 bincode fxhash instant paste; do
+            echo "===== $pkg ====="
+            cargo tree --locked -i "$pkg"
+          done
