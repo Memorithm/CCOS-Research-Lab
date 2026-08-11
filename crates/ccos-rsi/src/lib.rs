@@ -76,6 +76,7 @@ pub mod measured_substrate;
 pub mod memory;
 pub mod meta;
 pub mod obs;
+pub mod orchestrator;
 // Ω concret : banc de tâches réelles nommées (extension de §1, sans duplication).
 #[cfg(feature = "octasoma")]
 pub mod octasoma_memory;
@@ -120,6 +121,10 @@ pub use memory::{ContextMemory, LinearContextMemory};
 pub use meta::{CmaEsMeta, MetaOptimizer, MetaSearch, MetaStrategy};
 #[cfg(feature = "octasoma")]
 pub use octasoma_memory::OctaSomaMemory;
+pub use orchestrator::{
+    strategy_digest, CervoOrchestrator, OrchestratorConfig, RejectionReason, RoundReport,
+    SwarmEvent, SwarmMessage as OrchestratorMessage, UnitId, UnitSummary,
+};
 pub use rng::Rng;
 pub use schedule::{LoopSchedule, MetaMeta};
 pub use state::{CognitiveState, Dims};
