@@ -25,9 +25,12 @@ not CCOS Core.
 CCOS Core
   deterministic memory / provenance / event log
                     ^
-                    | future CcosAudit adapter
+                    | next: mirror canonical swarm audit
                     |
 CCOS Research Lab
+  SwarmAuditLog (portable SHA-256 chain)
+                    ^
+                    |
   CervoOrchestrator
       |      |      |
       v      v      v
@@ -95,12 +98,33 @@ over Tokio actors or process/network transports without making scheduling order
 part of the decision semantics.
 
 `strategy_digest()` is only a compact deterministic observability fingerprint.
-It is **not** a security digest.  The CCOS integration phase must seal events
-with the real hash-chained `EventLog`.
+It is **not** a security digest.
 
-## Tests introduced in P1
+## Portable hash-chain audit implemented
 
-The module tests assert:
+`orchestrator_audit.rs` adds `SwarmAuditLog`. It incrementally consumes
+`SwarmEvent`s and seals their canonical payloads into RSI's std-only SHA-256
+`HashChainLog` under event type `rsi_swarm`.
+
+Important properties:
+
+- duplicate synchronization is idempotent;
+- missing/reordered logical sequence numbers fail closed;
+- the same swarm replay produces the same chain head;
+- the chain is independently integrity-verifiable;
+- `to_ccos_json()` already provides the portable CCOS-ingestable representation.
+
+`HashChainLog::record_custom()` was added so control-plane events can share the
+same link-hash contract as RSI step events without widening the `AuditLog` trait
+or introducing a dependency on CCOS.
+
+This portable chain is **not a replacement for CCOS `EventLog`**. The next
+bridge mirrors the same canonical `rsi_swarm` payloads into the CCOS-side log,
+where product-wide provenance and replay live.
+
+## Tests introduced
+
+The modules assert:
 
 - duplicate IDs are rejected;
 - physical RSI steps are counted exactly once;
@@ -108,14 +132,19 @@ The module tests assert:
 - identical seeds/topology replay the same control-plane stream;
 - exact score ties use stable unit-ID ordering;
 - unit shutdown is observable;
-- strategy fingerprints are deterministic and sensitive to changes.
+- strategy fingerprints are deterministic and sensitive to changes;
+- custom events share RSI's SHA-256 hash-chain contract;
+- swarm audit synchronization is incremental;
+- sequence gaps fail closed;
+- identical swarm replay produces an identical audit head.
 
 ## Next phases
 
-### P2 — CCOS audit bridge
+### P2 — CCOS EventLog mirror
 
-Mirror every `SwarmEvent` into the CCOS-side hash-chained audit adapter without
-adding a dependency from `rsi` back to CCOS.
+Mirror every canonical `rsi_swarm` payload into the existing CCOS-side
+hash-chained `EventLog`, without adding a dependency from `rsi` back to CCOS.
+The portable `SwarmAuditLog` remains the deterministic producer-side proof.
 
 ### P3 — guarded candidate evaluation
 
