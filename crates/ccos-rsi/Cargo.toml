@@ -66,10 +66,9 @@ simd = ["dep:wide"]
 [dependencies]
 ccos-sandbox = { path = "../ccos-sandbox" }
 forge-core = { path = "../forge/forge-core", optional = true }
-# CCOS_EXTENDED: repointed from the git dep to the vendored workspace member
-# (`crates/ccos-octasoma`) — air-gap: no network fetch. Same package name `octasoma`,
-# same v0.4.0, so the `octasoma` feature's API is unchanged.
-octasoma = { path = "../ccos-octasoma", optional = true }
+# Canonical OctaSoma source, pinned to the same reviewed revision as the
+# Research root and OctaCore so RSI cannot reactivate the historical vendor.
+octasoma = { git = "https://github.com/Memorithm/octasoma", rev = "513cad43cb430b0e898330d67ea34ccfcd305b88", default-features = false, optional = true }
 rand = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 scirust-rsi = { git = "https://github.com/Memorithm/scirust", rev = "5c7e43b399d3247d68a957faf5e13f147e48a7ef", optional = true }
