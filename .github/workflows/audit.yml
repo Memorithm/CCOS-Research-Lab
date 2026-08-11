@@ -43,6 +43,8 @@ jobs:
       fail-on-vuln: true
     permissions:
       contents: read
+      actions: read
+      security-events: write
 
   sbom-and-provenance:
     runs-on: ubuntu-24.04
