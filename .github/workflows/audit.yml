@@ -9,6 +9,7 @@ name: Supply Chain
 on:
   push:
     branches: [main]
+  pull_request:
   schedule:
     - cron: "0 6 * * 1"
   workflow_dispatch:
