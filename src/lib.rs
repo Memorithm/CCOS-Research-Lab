@@ -208,6 +208,8 @@ pub mod retrieval;
 pub mod retrodict;
 #[cfg(feature = "rsi")]
 pub mod rsi_bridge;
+#[cfg(feature = "rsi")]
+pub mod rsi_swarm_bridge;
 pub mod sanitizer;
 pub mod setup;
 pub mod spectral;
