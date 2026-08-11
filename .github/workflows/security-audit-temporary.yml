@@ -1,0 +1,20 @@
+name: security-audit-temporary
+
+on:
+  push:
+    branches:
+      - arch/canonical-octasoma-v05
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rustsec:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit Cargo.lock
+        run: cargo audit --json | tee rustsec-audit.json
