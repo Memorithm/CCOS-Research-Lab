@@ -1,0 +1,54 @@
+name: Finish OctaSoma canonicalization
+
+on:
+  push:
+    branches: [arch/canonical-octasoma-v05]
+
+permissions:
+  contents: write
+
+jobs:
+  canonicalize:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: arch/canonical-octasoma-v05
+          fetch-depth: 0
+      - name: Install MSRV
+        run: rustup toolchain install 1.89.0 --profile minimal
+      - name: Remove final stale OctaSoma identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          old='513cad43cb430b0e898330d67ea34ccfcd305b88'
+          new='145761aeb52ef8ded85dcf2b8c97690005284926'
+          python3 - <<'PY'
+          from pathlib import Path
+          old = "513cad43cb430b0e898330d67ea34ccfcd305b88"
+          new = "145761aeb52ef8ded85dcf2b8c97690005284926"
+          p = Path("crates/ccos-rsi/Cargo.toml")
+          s = p.read_text()
+          if old not in s:
+              raise SystemExit("missing expected stale OctaSoma pin in crates/ccos-rsi/Cargo.toml")
+          p.write_text(s.replace(old, new))
+          PY
+          cargo +1.89.0 check --features rsi
+          cargo +1.89.0 check --features octasoma,octacore,rsi --locked
+          if grep -Fq "$old" Cargo.lock; then
+            echo "stale OctaSoma revision remains in Cargo.lock" >&2
+            grep -nF "$old" Cargo.lock >&2
+            exit 1
+          fi
+          count="$(grep -c '^name = "octasoma"$' Cargo.lock)"
+          test "$count" -eq 1 || { echo "expected one OctaSoma package, found $count" >&2; exit 1; }
+      - name: Commit canonical graph and remove helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/finish-octasoma-canonicalization.yml
+          git config user.name 'MEMOPERF'
+          git config user.email 'contact@checkupauto.fr'
+          git add crates/ccos-rsi/Cargo.toml Cargo.lock .github/workflows/finish-octasoma-canonicalization.yml
+          git commit -m 'fix(memory): eliminate duplicate OctaSoma identity'
+          git push origin HEAD:arch/canonical-octasoma-v05
