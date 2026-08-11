@@ -77,6 +77,7 @@ pub mod memory;
 pub mod meta;
 pub mod obs;
 pub mod orchestrator;
+pub mod orchestrator_audit;
 // Ω concret : banc de tâches réelles nommées (extension de §1, sans duplication).
 #[cfg(feature = "octasoma")]
 pub mod octasoma_memory;
@@ -125,6 +126,7 @@ pub use orchestrator::{
     strategy_digest, CervoOrchestrator, OrchestratorConfig, RejectionReason, RoundReport,
     SwarmEvent, SwarmMessage as OrchestratorMessage, UnitId, UnitSummary,
 };
+pub use orchestrator_audit::{canonical_swarm_payload, SwarmAuditError, SwarmAuditLog};
 pub use rng::Rng;
 pub use schedule::{LoopSchedule, MetaMeta};
 pub use state::{CognitiveState, Dims};
