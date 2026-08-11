@@ -34,6 +34,16 @@ jobs:
         run: cargo +1.89.0 install cargo-deny --version 0.19.9 --locked
       - run: cargo +1.89.0 deny check advisories bans licenses sources
 
+  osv-vulnerability-scan:
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+    with:
+      scan-args: |-
+        --lockfile=./Cargo.lock
+      upload-sarif: false
+      fail-on-vuln: true
+    permissions:
+      contents: read
+
   sbom-and-provenance:
     runs-on: ubuntu-24.04
     steps:
