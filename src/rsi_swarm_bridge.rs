@@ -83,11 +83,11 @@ impl CcosSwarmAudit {
     }
 
     pub fn len(&self) -> usize {
-        self.log.event_count()
+        self.log.events.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.log.events.is_empty()
     }
 
     pub fn head(&self) -> String {
@@ -102,7 +102,7 @@ impl CcosSwarmAudit {
 impl std::fmt::Debug for CcosSwarmAudit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CcosSwarmAudit")
-            .field("events", &self.log.event_count())
+            .field("events", &self.log.events.len())
             .field("last_seq", &self.last_seq)
             .field("head", &self.log.chain_head())
             .finish()
