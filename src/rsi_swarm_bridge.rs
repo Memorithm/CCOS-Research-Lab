@@ -112,7 +112,8 @@ impl std::fmt::Debug for CcosSwarmAudit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsi::{OrchestratorConfig, RSIAgent, SwarmMessage, UnitId};
+    use rsi::orchestrator::SwarmMessage;
+    use rsi::{OrchestratorConfig, RSIAgent, UnitId};
 
     fn build() -> CervoOrchestrator {
         let mut orchestrator = CervoOrchestrator::new(OrchestratorConfig {
@@ -144,7 +145,7 @@ mod tests {
         assert_eq!(audit.last_seq(), orchestrator.events().last().unwrap().seq);
 
         let first = &audit.event_log().events[0];
-        assert_eq!(first.event_type, EventType::AgentAction);
+        assert!(matches!(first.event_type, EventType::AgentAction));
         assert!(matches!(
             &first.payload,
             EventPayload::Custom { key, value }
