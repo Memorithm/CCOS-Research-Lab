@@ -10,6 +10,10 @@ permissions:
   contents: read
   security-events: read
 
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   dependabot:
     runs-on: ubuntu-24.04
@@ -36,23 +40,3 @@ jobs:
           grep -R 'sled::' -n crates/forge/forge-core/src || true
           echo "===== direct wasmi usage ====="
           grep -R 'wasmi::' -n crates/ccos-rsi/src || true
-
-  rustsec:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-      - name: Audit Cargo.lock
-        shell: bash
-        run: |
-          set -o pipefail
-          cargo audit --json | tee rustsec-audit.json || true
-      - name: Reverse dependency paths
-        shell: bash
-        run: |
-          set -euo pipefail
-          for pkg in pyo3 bincode fxhash instant paste; do
-            echo "===== $pkg ====="
-            cargo tree --locked -i "$pkg"
-          done
