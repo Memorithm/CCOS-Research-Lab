@@ -1,0 +1,30 @@
+# OSV Scanner exceptions are intentionally narrow and time-bounded.
+#
+# These four RustSec records are informational `unmaintained` advisories with
+# no patched release (`patched = []`), not fixable vulnerability releases.
+# They are inherited from historical/optional Forge (bincode/sled) and RSI
+# Wasmi dependency paths rather than introduced by the OctaSoma integration.
+#
+# Any other OSV finding remains fatal because the workflow keeps
+# `fail-on-vuln: true`. Reassess these exceptions no later than 2026-11-11 and
+# remove them sooner if the corresponding dependency paths are eliminated.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0141"
+ignoreUntil = 2026-11-11
+reason = "bincode 1.3.3 is reported by RustSec as unmaintained with no patched release; inherited from the historical Forge path. Remove when Forge serialization leaves bincode."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0057"
+ignoreUntil = 2026-11-11
+reason = "fxhash 0.2.1 is reported by RustSec as unmaintained with no patched release; inherited transitively through Forge -> sled. Remove with the sled path."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0384"
+ignoreUntil = 2026-11-11
+reason = "instant 0.1.13 is reported by RustSec as unmaintained with no patched release; inherited transitively through the old sled/parking_lot path. Remove with that path."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+ignoreUntil = 2026-11-11
+reason = "paste 1.0.15 is reported by RustSec as unmaintained with no patched release; inherited from RSI's optional wasmi 0.31 path. Remove when that optional runtime is migrated."
