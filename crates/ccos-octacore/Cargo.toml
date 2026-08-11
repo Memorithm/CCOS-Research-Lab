@@ -17,7 +17,7 @@ repository = "https://github.com/Memorithm/CCOS_EXTENDED"
 # `octacore`, not the reverse, so there is no circular edge. This crate therefore
 # has NO path/git dependency on CCOS and never fetches it.
 [dependencies]
-octasoma = { git = "https://github.com/Memorithm/octasoma", rev = "513cad43cb430b0e898330d67ea34ccfcd305b88", default-features = false }
+octasoma = { git = "https://github.com/Memorithm/octasoma", rev = "145761aeb52ef8ded85dcf2b8c97690005284926", default-features = false }
 
 # Optional real-system adapter (built only with the matching feature):
 scirust = { path = "../ccos-scirust", optional = true }

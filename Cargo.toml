@@ -97,7 +97,7 @@ ccos-scirust = { path = "crates/ccos-scirust", package = "scirust", optional = t
 # CCOS_EXTENDED: the org's octasoma is now vendored as a workspace member at
 # `crates/ccos-octasoma` (single v0.4.0 pin, no git fetch). The crate stays a
 # separate `#![forbid(unsafe_code)]` quarantine boundary.
-octasoma = { git = "https://github.com/Memorithm/octasoma", rev = "513cad43cb430b0e898330d67ea34ccfcd305b88", default-features = false, optional = true }
+octasoma = { git = "https://github.com/Memorithm/octasoma", rev = "145761aeb52ef8ded85dcf2b8c97690005284926", default-features = false, optional = true }
 # Opt-in **OctaCore cascade** (CCOS_EXTENDED, plan P2): the org's triad-assembler
 # vendored as a workspace member. After the P2 circular-dep inversion, this crate
 # has NO edge on CCOS; the CCOS-side `CcosScope` adapter (which implements

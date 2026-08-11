@@ -187,7 +187,7 @@ dependencies = [
  "lattice-slh-dsa",
  "mimalloc",
  "octacore",
- "octasoma",
+ "octasoma 0.4.0 (git+https://github.com/Memorithm/octasoma?rev=145761aeb52ef8ded85dcf2b8c97690005284926)",
  "proc-macro2",
  "proptest",
  "rand 0.8.7",
@@ -1267,10 +1267,20 @@ dependencies = [
 name = "octacore"
 version = "0.1.0"
 dependencies = [
- "octasoma",
+ "octasoma 0.4.0 (git+https://github.com/Memorithm/octasoma?rev=145761aeb52ef8ded85dcf2b8c97690005284926)",
  "scirust",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "octasoma"
+version = "0.4.0"
+source = "git+https://github.com/Memorithm/octasoma?rev=145761aeb52ef8ded85dcf2b8c97690005284926#145761aeb52ef8ded85dcf2b8c97690005284926"
+dependencies = [
+ "lz4_flex",
+ "scirust-retrieval",
+ "sha2",
 ]
 
 [[package]]
@@ -1809,7 +1819,7 @@ version = "0.10.0"
 dependencies = [
  "ccos-sandbox",
  "forge-core",
- "octasoma",
+ "octasoma 0.4.0 (git+https://github.com/Memorithm/octasoma?rev=513cad43cb430b0e898330d67ea34ccfcd305b88)",
  "rand 0.8.7",
  "scirust-rsi",
  "serde",
