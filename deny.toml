@@ -25,12 +25,18 @@ allow = [
     "Unlicense",
     "Zlib",
 ]
-exceptions = []
+# Custom source-available licenses are not globally allowed. Keep each reviewed
+# exception tied to the exact in-ecosystem package that declares it, so another
+# dependency cannot silently acquire the same permission.
+exceptions = [
+    { crate = "ccos-sandbox", allow = ["LicenseRef-TarekZekriti-Dual"] },
+    { crate = "octasoma", allow = ["LicenseRef-CheckupAuto-Dual"] },
+]
 
 [licenses.private]
 # Workspace crates carry the repository's source-available/custom commercial
-# terms. They are reviewed in THIRD_PARTY_NOTICES.md rather than treated as
-# third-party OSI dependencies by cargo-deny.
+# terms. Unpublished private workspace members are ignored here; publishable or
+# external custom-license crates still require the explicit exceptions above.
 ignore = true
 registries = []
 
