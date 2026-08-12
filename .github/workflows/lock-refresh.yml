@@ -1,0 +1,52 @@
+# Temporary branch-only validation helper. Removed before merge.
+name: Lock Refresh
+
+on:
+  push:
+    branches:
+      - fix/issue-3-dependabot-security
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-and-check:
+    if: ${{ !contains(github.event.head_commit.message, 'refresh Cargo.lock') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - run: rustup toolchain install 1.89.0 --profile minimal
+      - name: Resolve and compile changed dependency surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.89.0 check -p rsi --features scirust,wasm
+          cargo +1.89.0 check -p forge-core
+          cargo +1.89.0 check -p slha-python
+      - name: Prove RSI graph has no Git source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.89.0 tree -p rsi --features scirust > /tmp/rsi-tree.txt
+          cat /tmp/rsi-tree.txt
+          if grep -E '\(https?://|git\+' /tmp/rsi-tree.txt; then
+            echo 'ERROR: RSI dependency graph still contains a Git/network source' >&2
+            exit 1
+          fi
+          grep -F 'scirust-rsi v0.1.0 (' /tmp/rsi-tree.txt
+          grep -F '/vendor/scirust-rsi)' /tmp/rsi-tree.txt
+      - name: Commit refreshed lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Cargo.lock
+          if git diff --cached --quiet; then
+            echo 'Cargo.lock already current'
+            exit 0
+          fi
+          git commit -m 'chore(deps): refresh Cargo.lock after security updates'
+          git push
