@@ -1,14 +1,10 @@
 use rsi::{encode_candidate, CandidateEnvelope, CandidateOrigin};
 
 const SOURCE: &[u8] = b"pub fn kernel() {}";
-const SOURCE_SHA256: &str =
-    "3b6e6e212c45273719067e12eac78aceaf44fbb2ffcafef4ab4519a64c5083e1";
-const CANDIDATE_ID: &str =
-    "4457784cc3119a48ab2f90fbac86d5e5c1ab0c99b46b567edd8dbd1bb3a3446f";
-const ENVELOPE_SHA256: &str =
-    "9a531d78fbf991077c087bdac953db53b1ede544349a71c5e6bdbe25f00e8693";
-const PROPOSAL_SHA256: &str =
-    "1111111111111111111111111111111111111111111111111111111111111111";
+const SOURCE_SHA256: &str = "3b6e6e212c45273719067e12eac78aceaf44fbb2ffcafef4ab4519a64c5083e1";
+const CANDIDATE_ID: &str = "4457784cc3119a48ab2f90fbac86d5e5c1ab0c99b46b567edd8dbd1bb3a3446f";
+const ENVELOPE_SHA256: &str = "9a531d78fbf991077c087bdac953db53b1ede544349a71c5e6bdbe25f00e8693";
+const PROPOSAL_SHA256: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 
 const GOLDEN_WIRE: &str = concat!(
     "{\"candidate_id\":\"4457784cc3119a48ab2f90fbac86d5e5c1ab0c99b46b567edd8dbd1bb3a3446f\",",

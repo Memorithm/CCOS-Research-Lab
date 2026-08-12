@@ -38,10 +38,8 @@ impl SwarmAuditLog {
     /// fails closed without leaving a partially ingested batch.
     pub fn ingest(&mut self, events: &[SwarmEvent]) -> Result<usize, SwarmAuditError> {
         let last_seq = self.last_seq;
-        let pending: Vec<&SwarmEvent> = events
-            .iter()
-            .filter(|event| event.seq > last_seq)
-            .collect();
+        let pending: Vec<&SwarmEvent> =
+            events.iter().filter(|event| event.seq > last_seq).collect();
 
         let mut expected = last_seq.saturating_add(1);
         for event in &pending {

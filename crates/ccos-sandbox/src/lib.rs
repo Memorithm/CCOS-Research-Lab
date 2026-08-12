@@ -113,10 +113,7 @@ impl HermeticRustPolicy {
         environment.insert("CARGO_NET_OFFLINE".into(), "true".into());
         environment.insert("CARGO_TARGET_DIR".into(), "/workspace/target".into());
         environment.insert("CARGO_INCREMENTAL".into(), "0".into());
-        environment.insert(
-            "RUSTC".into(),
-            Self::rustc_program().into_os_string(),
-        );
+        environment.insert("RUSTC".into(), Self::rustc_program().into_os_string());
         environment.insert("RUST_BACKTRACE".into(), "0".into());
         environment.insert("CARGO_TERM_COLOR".into(), "never".into());
         environment
@@ -437,9 +434,7 @@ impl SandboxRunner for LinuxBubblewrap {
             "--dir",
             SANDBOX_WORKSPACE,
         ]);
-        cmd.args(["--bind"])
-            .arg(workspace)
-            .arg(SANDBOX_WORKSPACE);
+        cmd.args(["--bind"]).arg(workspace).arg(SANDBOX_WORKSPACE);
         for mount in &self.read_only_mounts {
             cmd.arg("--ro-bind").arg(&mount.source).arg(&mount.target);
         }
@@ -635,14 +630,16 @@ mod tests {
     #[test]
     fn candidate_cannot_override_loader_or_toolchain_environment() {
         let mut spec = base_spec(std::env::temp_dir());
-        spec.environment.insert("LD_PRELOAD".into(), "/workspace/evil.so".into());
+        spec.environment
+            .insert("LD_PRELOAD".into(), "/workspace/evil.so".into());
         assert!(matches!(
             LinuxBubblewrap::default().run(&spec),
             Err(SandboxError::PolicyViolation(_))
         ));
 
         let mut spec = base_spec(std::env::temp_dir());
-        spec.environment.insert("RUSTC".into(), "/workspace/fake-rustc".into());
+        spec.environment
+            .insert("RUSTC".into(), "/workspace/fake-rustc".into());
         assert!(matches!(
             LinuxBubblewrap::default().run(&spec),
             Err(SandboxError::PolicyViolation(_))
@@ -664,11 +661,15 @@ mod tests {
         assert!(targets.contains(&Path::new(HERMETIC_CARGO_VENDOR_ROOT)));
         assert!(targets.contains(&Path::new(HERMETIC_CARGO_HOME_ROOT)));
         assert_eq!(
-            runner.protected_environment().get(OsStr::new("CARGO_NET_OFFLINE")),
+            runner
+                .protected_environment()
+                .get(OsStr::new("CARGO_NET_OFFLINE")),
             Some(&OsString::from("true"))
         );
         assert_eq!(
-            runner.protected_environment().get(OsStr::new("CARGO_TARGET_DIR")),
+            runner
+                .protected_environment()
+                .get(OsStr::new("CARGO_TARGET_DIR")),
             Some(&OsString::from("/workspace/target"))
         );
     }

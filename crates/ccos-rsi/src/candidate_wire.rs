@@ -100,10 +100,7 @@ fn required_u16(
         .get(key)
         .and_then(Json::as_f64)
         .filter(|value| {
-            value.is_finite()
-                && *value >= 0.0
-                && value.fract() == 0.0
-                && *value <= u16::MAX as f64
+            value.is_finite() && *value >= 0.0 && value.fract() == 0.0 && *value <= u16::MAX as f64
         })
         .ok_or(CandidateWireError::Invalid(key))?;
     Ok(value as u16)
@@ -182,7 +179,10 @@ pub fn encode_candidate(candidate: &CandidateEnvelope) -> Result<String, Candida
     json.set("candidate_id", Json::Str(candidate.candidate_id.clone()))
         .set("domain", Json::Str(candidate.domain.clone()))
         .set("fingerprint", Json::Str(candidate.fingerprint()))
-        .set("origin", Json::Str(origin_name(candidate.origin).to_string()))
+        .set(
+            "origin",
+            Json::Str(origin_name(candidate.origin).to_string()),
+        )
         .set(
             "parent_candidate_id",
             option_string(candidate.parent_candidate_id.as_deref()),
@@ -284,7 +284,10 @@ pub fn encode_evaluation(
         "execution_profile_sha256",
         option_string(receipt.execution_profile_sha256.as_deref()),
     )
-    .set("failure_reason", option_string(receipt.failure_reason.as_deref()))
+    .set(
+        "failure_reason",
+        option_string(receipt.failure_reason.as_deref()),
+    )
     .set("fingerprint", Json::Str(receipt.fingerprint()))
     .set(
         "objectives",
@@ -371,23 +374,26 @@ pub fn encode_adoption(
 ) -> Result<String, CandidateWireError> {
     validate_adoption(evaluation, receipt)?;
     let mut json = Json::obj();
-    json.set("decision", Json::Str(decision_name(receipt.decision).to_string()))
-        .set(
-            "evaluation_fingerprint",
-            Json::Str(receipt.evaluation_fingerprint.clone()),
-        )
-        .set("fingerprint", Json::Str(receipt.fingerprint()))
-        .set("policy_id", Json::Str(receipt.policy_id.clone()))
-        .set(
-            "previous_champion_id",
-            option_string(receipt.previous_champion_id.as_deref()),
-        )
-        .set(
-            "promoted_artifact_sha256",
-            option_string(receipt.promoted_artifact_sha256.as_deref()),
-        )
-        .set("reason", Json::Str(receipt.reason.clone()))
-        .set("schema_version", Json::Num(receipt.schema_version as f64));
+    json.set(
+        "decision",
+        Json::Str(decision_name(receipt.decision).to_string()),
+    )
+    .set(
+        "evaluation_fingerprint",
+        Json::Str(receipt.evaluation_fingerprint.clone()),
+    )
+    .set("fingerprint", Json::Str(receipt.fingerprint()))
+    .set("policy_id", Json::Str(receipt.policy_id.clone()))
+    .set(
+        "previous_champion_id",
+        option_string(receipt.previous_champion_id.as_deref()),
+    )
+    .set(
+        "promoted_artifact_sha256",
+        option_string(receipt.promoted_artifact_sha256.as_deref()),
+    )
+    .set("reason", Json::Str(receipt.reason.clone()))
+    .set("schema_version", Json::Num(receipt.schema_version as f64));
     Ok(json.to_string())
 }
 

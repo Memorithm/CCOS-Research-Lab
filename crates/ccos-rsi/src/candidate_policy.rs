@@ -66,13 +66,17 @@ fn validate_optional_digest(
 
 pub fn validate_candidate(candidate: &CandidateEnvelope) -> Result<(), CandidateProtocolError> {
     if candidate.schema_version != CANDIDATE_PROTOCOL_VERSION {
-        return Err(CandidateProtocolError::InvalidField("candidate.schema_version"));
+        return Err(CandidateProtocolError::InvalidField(
+            "candidate.schema_version",
+        ));
     }
     if candidate.domain.trim().is_empty() {
         return Err(CandidateProtocolError::InvalidField("candidate.domain"));
     }
     if !is_sha256_hex(&candidate.source_sha256) {
-        return Err(CandidateProtocolError::InvalidField("candidate.source_sha256"));
+        return Err(CandidateProtocolError::InvalidField(
+            "candidate.source_sha256",
+        ));
     }
     validate_optional_digest(
         candidate.proposal_sha256.as_deref(),
@@ -131,7 +135,9 @@ pub fn validate_evaluation(
         ));
     }
     if receipt.evaluator_id.trim().is_empty() {
-        return Err(CandidateProtocolError::InvalidField("evaluation.evaluator_id"));
+        return Err(CandidateProtocolError::InvalidField(
+            "evaluation.evaluator_id",
+        ));
     }
     if receipt.sandbox_policy_id.trim().is_empty() {
         return Err(CandidateProtocolError::InvalidField(
@@ -157,7 +163,10 @@ pub fn validate_evaluation(
 
     match receipt.status {
         EvaluationStatus::Succeeded => {
-            if receipt.timed_out || receipt.failure_reason.is_some() || receipt.objectives.is_empty() {
+            if receipt.timed_out
+                || receipt.failure_reason.is_some()
+                || receipt.objectives.is_empty()
+            {
                 return Err(CandidateProtocolError::PolicyViolation(
                     "successful evaluation must contain objectives and no failure state".into(),
                 ));
@@ -179,7 +188,9 @@ pub fn validate_adoption(
     adoption: &AdoptionReceipt,
 ) -> Result<(), CandidateProtocolError> {
     if adoption.schema_version != CANDIDATE_PROTOCOL_VERSION {
-        return Err(CandidateProtocolError::InvalidField("adoption.schema_version"));
+        return Err(CandidateProtocolError::InvalidField(
+            "adoption.schema_version",
+        ));
     }
     if adoption.evaluation_fingerprint != evaluation.fingerprint() {
         return Err(CandidateProtocolError::PolicyViolation(
@@ -408,7 +419,9 @@ impl PromotionEvidenceBundle {
         let first = selection
             .first()
             .or_else(|| holdout.first())
-            .ok_or_else(|| CandidateProtocolError::PolicyViolation("empty evidence bundle".into()))?;
+            .ok_or_else(|| {
+                CandidateProtocolError::PolicyViolation("empty evidence bundle".into())
+            })?;
         let champion_candidate_id = first.champion_candidate.candidate_id.clone();
         let challenger_candidate_id = first.challenger_candidate.candidate_id.clone();
         if champion_candidate_id == challenger_candidate_id {
@@ -668,9 +681,7 @@ impl RepeatedSeedPromotionPolicy {
         } else if !holdout_passed {
             (
                 AdoptionDecision::Reject,
-                format!(
-                    "disjoint holdout gate failed; evidence_sha256={evidence_fingerprint}"
-                ),
+                format!("disjoint holdout gate failed; evidence_sha256={evidence_fingerprint}"),
                 None,
             )
         } else {
@@ -705,10 +716,7 @@ impl RepeatedSeedPromotionPolicy {
         Ok(RepeatedSeedDecision { adoption, evidence })
     }
 
-    fn stage_passes(
-        &self,
-        pairs: &[EvaluationPair<'_>],
-    ) -> Result<bool, CandidateProtocolError> {
+    fn stage_passes(&self, pairs: &[EvaluationPair<'_>]) -> Result<bool, CandidateProtocolError> {
         let mut primary = Vec::with_capacity(pairs.len());
         let mut wins = 0usize;
         for pair in pairs {
@@ -775,12 +783,25 @@ mod tests {
         }
     }
 
-    fn pair(seed: u64, challenger_latency: f64) -> (CandidateEnvelope, EvaluationReceipt, CandidateEnvelope, EvaluationReceipt) {
+    fn pair(
+        seed: u64,
+        challenger_latency: f64,
+    ) -> (
+        CandidateEnvelope,
+        EvaluationReceipt,
+        CandidateEnvelope,
+        EvaluationReceipt,
+    ) {
         let champion_candidate = candidate(seed, b"champion");
         let challenger_candidate = candidate(seed, b"challenger");
         let champion = evaluation(&champion_candidate, 100.0, 100.0);
         let challenger = evaluation(&challenger_candidate, challenger_latency, 102.0);
-        (champion_candidate, champion, challenger_candidate, challenger)
+        (
+            champion_candidate,
+            champion,
+            challenger_candidate,
+            challenger,
+        )
     }
 
     #[test]
@@ -861,14 +882,35 @@ mod tests {
         let h1 = pair(201, 85.0);
         let h2 = pair(202, 83.0);
         let selection = [
-            EvaluationPair { champion_candidate: &s1.0, champion: &s1.1, challenger_candidate: &s1.2, challenger: &s1.3 },
-            EvaluationPair { champion_candidate: &s2.0, champion: &s2.1, challenger_candidate: &s2.2, challenger: &s2.3 },
+            EvaluationPair {
+                champion_candidate: &s1.0,
+                champion: &s1.1,
+                challenger_candidate: &s1.2,
+                challenger: &s1.3,
+            },
+            EvaluationPair {
+                champion_candidate: &s2.0,
+                champion: &s2.1,
+                challenger_candidate: &s2.2,
+                challenger: &s2.3,
+            },
         ];
         let holdout = [
-            EvaluationPair { champion_candidate: &h1.0, champion: &h1.1, challenger_candidate: &h1.2, challenger: &h1.3 },
-            EvaluationPair { champion_candidate: &h2.0, champion: &h2.1, challenger_candidate: &h2.2, challenger: &h2.3 },
+            EvaluationPair {
+                champion_candidate: &h1.0,
+                champion: &h1.1,
+                challenger_candidate: &h1.2,
+                challenger: &h1.3,
+            },
+            EvaluationPair {
+                champion_candidate: &h2.0,
+                champion: &h2.1,
+                challenger_candidate: &h2.2,
+                challenger: &h2.3,
+            },
         ];
-        let policy = RepeatedSeedPromotionPolicy::new("repeat-v1", 2, 2, 0.10, 0.05, 10_000).unwrap();
+        let policy =
+            RepeatedSeedPromotionPolicy::new("repeat-v1", 2, 2, 0.10, 0.05, 10_000).unwrap();
         let decision = policy
             .decide(&selection, &holdout, Some("f".repeat(64)))
             .unwrap();
@@ -885,9 +927,20 @@ mod tests {
     fn repeated_seed_overlap_between_selection_and_holdout_is_rejected() {
         let s1 = pair(101, 80.0);
         let h1 = pair(101, 80.0);
-        let selection = [EvaluationPair { champion_candidate: &s1.0, champion: &s1.1, challenger_candidate: &s1.2, challenger: &s1.3 }];
-        let holdout = [EvaluationPair { champion_candidate: &h1.0, champion: &h1.1, challenger_candidate: &h1.2, challenger: &h1.3 }];
-        let policy = RepeatedSeedPromotionPolicy::new("repeat-v1", 1, 1, 0.10, 0.05, 10_000).unwrap();
+        let selection = [EvaluationPair {
+            champion_candidate: &s1.0,
+            champion: &s1.1,
+            challenger_candidate: &s1.2,
+            challenger: &s1.3,
+        }];
+        let holdout = [EvaluationPair {
+            champion_candidate: &h1.0,
+            champion: &h1.1,
+            challenger_candidate: &h1.2,
+            challenger: &h1.3,
+        }];
+        let policy =
+            RepeatedSeedPromotionPolicy::new("repeat-v1", 1, 1, 0.10, 0.05, 10_000).unwrap();
         assert!(policy
             .decide(&selection, &holdout, Some("f".repeat(64)))
             .is_err());
@@ -900,14 +953,35 @@ mod tests {
         let h1 = pair(201, 99.0);
         let h2 = pair(202, 100.0);
         let selection = [
-            EvaluationPair { champion_candidate: &s1.0, champion: &s1.1, challenger_candidate: &s1.2, challenger: &s1.3 },
-            EvaluationPair { champion_candidate: &s2.0, champion: &s2.1, challenger_candidate: &s2.2, challenger: &s2.3 },
+            EvaluationPair {
+                champion_candidate: &s1.0,
+                champion: &s1.1,
+                challenger_candidate: &s1.2,
+                challenger: &s1.3,
+            },
+            EvaluationPair {
+                champion_candidate: &s2.0,
+                champion: &s2.1,
+                challenger_candidate: &s2.2,
+                challenger: &s2.3,
+            },
         ];
         let holdout = [
-            EvaluationPair { champion_candidate: &h1.0, champion: &h1.1, challenger_candidate: &h1.2, challenger: &h1.3 },
-            EvaluationPair { champion_candidate: &h2.0, champion: &h2.1, challenger_candidate: &h2.2, challenger: &h2.3 },
+            EvaluationPair {
+                champion_candidate: &h1.0,
+                champion: &h1.1,
+                challenger_candidate: &h1.2,
+                challenger: &h1.3,
+            },
+            EvaluationPair {
+                champion_candidate: &h2.0,
+                champion: &h2.1,
+                challenger_candidate: &h2.2,
+                challenger: &h2.3,
+            },
         ];
-        let policy = RepeatedSeedPromotionPolicy::new("repeat-v1", 2, 2, 0.10, 0.05, 10_000).unwrap();
+        let policy =
+            RepeatedSeedPromotionPolicy::new("repeat-v1", 2, 2, 0.10, 0.05, 10_000).unwrap();
         let decision = policy
             .decide(&selection, &holdout, Some("f".repeat(64)))
             .unwrap();

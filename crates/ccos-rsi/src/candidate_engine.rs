@@ -109,9 +109,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::time::Duration;
 
-    use ccos_sandbox::{
-        NetworkPolicy, SandboxError, SandboxExit, SandboxOutput, SandboxSpec,
-    };
+    use ccos_sandbox::{NetworkPolicy, SandboxError, SandboxExit, SandboxOutput, SandboxSpec};
 
     use super::*;
     use crate::candidate_protocol::{CandidateOrigin, ObjectiveValue, PreparedEvaluation};

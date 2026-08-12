@@ -332,9 +332,7 @@ impl CervoOrchestrator {
             .as_ref()
             .ok_or(RejectionReason::InsufficientSafeGain)?;
 
-        if source_report.si_safe
-            <= target_report.si_safe + self.config.adoption_margin
-        {
+        if source_report.si_safe <= target_report.si_safe + self.config.adoption_margin {
             return Err(RejectionReason::InsufficientSafeGain);
         }
         if source_report.risk_global > target_report.risk_global + self.config.risk_slack
@@ -429,12 +427,8 @@ mod tests {
             max_source_rpn: f64::MAX,
         })
         .unwrap();
-        orchestrator
-            .spawn(UnitId(20), RSIAgent::demo(20))
-            .unwrap();
-        orchestrator
-            .spawn(UnitId(10), RSIAgent::demo(10))
-            .unwrap();
+        orchestrator.spawn(UnitId(20), RSIAgent::demo(20)).unwrap();
+        orchestrator.spawn(UnitId(10), RSIAgent::demo(10)).unwrap();
         orchestrator
     }
 

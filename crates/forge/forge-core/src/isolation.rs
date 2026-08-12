@@ -244,13 +244,13 @@ pub fn run_frozen_artifact(
 ) -> Result<String> {
     require_real_file(artifact, "frozen artifact")?;
     require_real_directory(scratch_workspace, "artifact scratch workspace")?;
-    let artifact_parent = artifact.parent().ok_or_else(|| {
-        ForgeError::Evaluation("frozen artifact has no parent directory".into())
-    })?;
+    let artifact_parent = artifact
+        .parent()
+        .ok_or_else(|| ForgeError::Evaluation("frozen artifact has no parent directory".into()))?;
     require_real_directory(artifact_parent, "frozen artifact directory")?;
-    let file_name = artifact.file_name().ok_or_else(|| {
-        ForgeError::Evaluation("frozen artifact has no file name".into())
-    })?;
+    let file_name = artifact
+        .file_name()
+        .ok_or_else(|| ForgeError::Evaluation("frozen artifact has no file name".into()))?;
     let runner = LinuxBubblewrap::with_read_only_mounts(vec![ReadOnlyMount::new(
         artifact_parent,
         "/artifact",
@@ -325,8 +325,17 @@ mod tests {
     #[test]
     fn incomplete_hermetic_source_fails_before_sandbox_spawn() {
         let source = unique_temp_dir("missing-lock");
-        fs::write(source.join("Cargo.toml"), "[package]\nname='x'\nversion='0.1.0'\n").unwrap();
-        let inputs = HermeticRustInputs::new(&source, "/missing-toolchain", "/missing-vendor", "/missing-home");
+        fs::write(
+            source.join("Cargo.toml"),
+            "[package]\nname='x'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        let inputs = HermeticRustInputs::new(
+            &source,
+            "/missing-toolchain",
+            "/missing-vendor",
+            "/missing-home",
+        );
         let error = inputs.validate().unwrap_err();
         assert!(format!("{error}").contains("Cargo.lock"));
         let _ = fs::remove_dir_all(source);

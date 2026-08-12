@@ -440,7 +440,10 @@ where
         let (status, objectives, failure_reason) = if process_succeeded {
             match harness.parse_objectives(candidate, &output) {
                 Ok(objectives) => {
-                    if objectives.iter().any(|objective| !objective.value.is_finite()) {
+                    if objectives
+                        .iter()
+                        .any(|objective| !objective.value.is_finite())
+                    {
                         return Err(CandidateProtocolError::PolicyViolation(
                             "harness returned a non-finite objective".into(),
                         ));
