@@ -66,6 +66,28 @@ jobs:
             exit 1
           fi
 
+      - name: Repair strict Clippy findings
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('crates/ccos-rsi/src/counterexample.rs')
+          s = p.read_text()
+          replacements = [
+              ('    Found(CounterexampleWitness),', '    Found(Box<CounterexampleWitness>),'),
+              ('return Ok(CounterexampleSearchResult::Found(witness));', 'return Ok(CounterexampleSearchResult::Found(Box::new(witness)));'),
+              ('            chunk = (chunk + 1) / 2;', '            chunk = chunk.div_ceil(2);'),
+          ]
+          for old, new in replacements:
+              if old not in s:
+                  if new in s:
+                      continue
+                  raise SystemExit(f'expected source anchor missing: {old}')
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          cargo +1.89.0 fmt --package rsi
+          git diff --check
+
       - name: Validate counterexample layer on current main
         run: |
           set -euo pipefail
