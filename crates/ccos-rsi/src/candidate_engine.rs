@@ -95,6 +95,7 @@ mod tests {
                     args: Vec::new(),
                     cwd: "/tmp".into(),
                     writable_paths: vec!["/tmp".into()],
+                    read_only_mounts: Vec::new(),
                     environment: BTreeMap::new(),
                     timeout: Duration::from_secs(1),
                     termination_grace: Duration::from_millis(10),
