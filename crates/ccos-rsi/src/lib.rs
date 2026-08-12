@@ -64,6 +64,8 @@ pub mod criticality;
 // `soul-rsi` : propose un patch → build+test en copie isolée → garde si meilleur.
 pub mod dgm;
 pub mod dynamics;
+#[cfg(feature = "execution-attestation")]
+pub mod execution_attestation;
 #[cfg(feature = "forge")]
 pub mod forge_meta;
 #[cfg(feature = "forge")]
@@ -109,6 +111,8 @@ pub use agent::{RSIAgent, StepReport};
 pub use api::{ApiResult, RsiApi};
 pub use ascent::{ascend, Guard, RefineTask, Report, StopReason as AscentStop};
 pub use audit::{AuditEvent, AuditLog, HashChainLog, TraceEvent};
+#[cfg(feature = "execution-attestation")]
+pub use candidate_engine::CandidateExecutionAttestation;
 pub use candidate_engine::{SandboxCandidateEvaluator, SealedCandidateEvaluator};
 pub use candidate_policy::{
     validate_adoption, validate_candidate, validate_evaluation, ChampionChallengerPolicy,
@@ -127,6 +131,12 @@ pub use cma::SepCmaEs;
 pub use convergence::{ConvergenceDetector, Trend};
 pub use criticality::{RiskConfig, RiskModel, RiskReport, RiskSignals};
 pub use dynamics::{Dynamics, StabilityConfig, StepInfo};
+#[cfg(feature = "execution-attestation")]
+pub use execution_attestation::{
+    ExecutionArchitecture, ExecutionArchitectureFamily, ExecutionAttestation,
+    ExecutionAttestationError, ExecutionBackendKind, ExecutionProfile, ExecutionReproducibility,
+    Sha256Digest, EXECUTION_PROFILE_SCHEMA_VERSION,
+};
 #[cfg(feature = "forge")]
 pub use forge_meta::ForgeMetaSearch;
 #[cfg(feature = "forge")]
