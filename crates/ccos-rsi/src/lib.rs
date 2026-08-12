@@ -55,6 +55,7 @@ pub mod audit;
 pub mod candidate_engine;
 pub mod candidate_policy;
 pub mod candidate_protocol;
+pub mod candidate_wire;
 pub mod checkpoint;
 pub mod cma;
 pub mod convergence;
@@ -116,6 +117,10 @@ pub use candidate_protocol::{
     AdoptionDecision, AdoptionReceipt, CandidateEnvelope, CandidateHarness, CandidateOrigin,
     CandidateProtocolError, EvaluationReceipt, EvaluationStatus, GuardedCandidateEvaluator,
     ObjectiveValue, PreparedEvaluation, CANDIDATE_PROTOCOL_VERSION,
+};
+pub use candidate_wire::{
+    decode_adoption, decode_candidate, decode_evaluation, encode_adoption, encode_candidate,
+    encode_evaluation, CandidateWireError,
 };
 pub use checkpoint::Checkpoint;
 pub use cma::SepCmaEs;
