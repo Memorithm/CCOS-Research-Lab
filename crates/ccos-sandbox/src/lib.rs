@@ -21,12 +21,36 @@ pub enum NetworkPolicy {
     LoopbackOnly,
 }
 
+/// Explicit trusted read-only input mounted into the sandbox.
+///
+/// `target` is intentionally restricted to a single top-level sandbox path
+/// (for example `/rust-toolchain` or `/cargo-vendor`). This prevents a caller
+/// from shadowing `/workspace`, `/usr`, `/proc`, `/dev` or another security
+/// boundary while still allowing hermetic toolchains and dependency snapshots.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReadOnlyMount {
+    pub source: PathBuf,
+    pub target: PathBuf,
+}
+
+impl ReadOnlyMount {
+    pub fn new(source: impl Into<PathBuf>, target: impl Into<PathBuf>) -> Self {
+        Self {
+            source: source.into(),
+            target: target.into(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SandboxSpec {
     pub program: PathBuf,
     pub args: Vec<OsString>,
     pub cwd: PathBuf,
+    /// Exactly one writable host workspace is exposed as `/workspace`.
     pub writable_paths: Vec<PathBuf>,
+    /// Trusted immutable inputs exposed at explicit top-level sandbox paths.
+    pub read_only_mounts: Vec<ReadOnlyMount>,
     pub environment: BTreeMap<OsString, OsString>,
     pub timeout: Duration,
     pub termination_grace: Duration,
@@ -93,7 +117,9 @@ impl LinuxBubblewrap {
             .map(Path::to_path_buf)
     }
 
-    fn resource_limit_args(spec: &SandboxSpec) -> Result<Option<(PathBuf, Vec<OsString>)>, SandboxError> {
+    fn resource_limit_args(
+        spec: &SandboxSpec,
+    ) -> Result<Option<(PathBuf, Vec<OsString>)>, SandboxError> {
         let requested = spec.max_memory_bytes.is_some()
             || spec.max_file_size_bytes.is_some()
             || spec.max_processes.is_some()
@@ -126,6 +152,49 @@ impl LinuxBubblewrap {
         }
         Ok(Some((prlimit, args)))
     }
+
+    fn validate_mount(mount: &ReadOnlyMount) -> Result<(), SandboxError> {
+        if !mount.source.exists() {
+            return Err(SandboxError::PolicyViolation(format!(
+                "read-only mount source does not exist: {}",
+                mount.source.display()
+            )));
+        }
+        if !mount.target.is_absolute() {
+            return Err(SandboxError::PolicyViolation(
+                "read-only mount target must be absolute".into(),
+            ));
+        }
+        let mut components = mount.target.components();
+        let _root = components.next();
+        let Some(std::path::Component::Normal(_)) = components.next() else {
+            return Err(SandboxError::PolicyViolation(
+                "read-only mount target must be one top-level sandbox path".into(),
+            ));
+        };
+        if components.next().is_some() {
+            return Err(SandboxError::PolicyViolation(
+                "read-only mount target must be one top-level sandbox path".into(),
+            ));
+        }
+        let forbidden = [
+            "/workspace",
+            "/usr",
+            "/bin",
+            "/lib",
+            "/lib64",
+            "/proc",
+            "/dev",
+            "/tmp",
+        ];
+        if forbidden.iter().any(|path| mount.target == Path::new(path)) {
+            return Err(SandboxError::PolicyViolation(format!(
+                "read-only mount target is reserved: {}",
+                mount.target.display()
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl SandboxRunner for LinuxBubblewrap {
@@ -135,10 +204,25 @@ impl SandboxRunner for LinuxBubblewrap {
                 "workspace paths must be directories".into(),
             ));
         }
-        if spec.writable_paths.is_empty() {
+        if spec.writable_paths.len() != 1 {
             return Err(SandboxError::PolicyViolation(
-                "at least one writable workspace path is required".into(),
+                "exactly one writable workspace path is required".into(),
             ));
+        }
+        let workspace = &spec.writable_paths[0];
+        let canonical_cwd = spec.cwd.canonicalize().map_err(|error| {
+            SandboxError::PolicyViolation(format!("cannot canonicalize cwd: {error}"))
+        })?;
+        let canonical_workspace = workspace.canonicalize().map_err(|error| {
+            SandboxError::PolicyViolation(format!("cannot canonicalize workspace: {error}"))
+        })?;
+        if canonical_cwd != canonical_workspace {
+            return Err(SandboxError::PolicyViolation(
+                "sandbox cwd must equal the single writable workspace".into(),
+            ));
+        }
+        for mount in &spec.read_only_mounts {
+            Self::validate_mount(mount)?;
         }
 
         let bwrap = Self::executable()?;
@@ -180,8 +264,11 @@ impl SandboxRunner for LinuxBubblewrap {
             "--dir",
             "/workspace",
         ]);
-        for path in &spec.writable_paths {
-            cmd.args(["--bind"]).arg(path).args(["/workspace"]);
+        cmd.args(["--bind"])
+            .arg(workspace)
+            .args(["/workspace"]);
+        for mount in &spec.read_only_mounts {
+            cmd.arg("--ro-bind").arg(&mount.source).arg(&mount.target);
         }
         cmd.args([
             "--chdir",
@@ -303,6 +390,7 @@ mod tests {
             args: vec!["ok".into()],
             cwd: cwd.clone(),
             writable_paths: vec![cwd],
+            read_only_mounts: Vec::new(),
             environment: BTreeMap::new(),
             timeout: Duration::from_secs(2),
             termination_grace: Duration::from_millis(50),
@@ -326,13 +414,33 @@ mod tests {
     }
 
     #[test]
-    fn empty_writable_workspace_is_rejected() {
+    fn writable_workspace_is_unambiguous() {
         let mut spec = base_spec(std::env::temp_dir());
         spec.writable_paths.clear();
         assert!(matches!(
             LinuxBubblewrap.run(&spec),
             Err(SandboxError::PolicyViolation(_))
         ));
+        spec.writable_paths = vec![std::env::temp_dir(), std::env::temp_dir()];
+        assert!(matches!(
+            LinuxBubblewrap.run(&spec),
+            Err(SandboxError::PolicyViolation(_))
+        ));
+    }
+
+    #[test]
+    fn reserved_readonly_mount_target_is_rejected() {
+        let mount = ReadOnlyMount::new(std::env::temp_dir(), "/workspace");
+        assert!(matches!(
+            LinuxBubblewrap::validate_mount(&mount),
+            Err(SandboxError::PolicyViolation(_))
+        ));
+    }
+
+    #[test]
+    fn top_level_readonly_mount_is_accepted() {
+        let mount = ReadOnlyMount::new(std::env::temp_dir(), "/rust-toolchain");
+        LinuxBubblewrap::validate_mount(&mount).unwrap();
     }
 
     #[test]
