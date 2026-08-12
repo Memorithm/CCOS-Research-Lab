@@ -211,6 +211,11 @@ impl LinuxBubblewrap {
 
 impl SandboxRunner for LinuxBubblewrap {
     fn run(&self, spec: &SandboxSpec) -> Result<SandboxOutput, SandboxError> {
+        if spec.network != NetworkPolicy::Deny {
+            return Err(SandboxError::PolicyViolation(
+                "LoopbackOnly is not implemented; only NetworkPolicy::Deny is supported".into(),
+            ));
+        }
         if !spec.cwd.is_dir() || spec.writable_paths.iter().any(|p| !p.is_dir()) {
             return Err(SandboxError::PolicyViolation(
                 "workspace paths must be directories".into(),
@@ -325,17 +330,17 @@ impl SandboxRunner for LinuxBubblewrap {
             .take()
             .ok_or_else(|| SandboxError::Spawn("stderr".into()))?;
         let cap = (spec.max_output_bytes / 2).max(1) as usize;
-        let (tx, rx) = std::sync::mpsc::channel();
-        let tx2 = tx.clone();
+        let (stdout_tx, stdout_rx) = std::sync::mpsc::channel();
+        let (stderr_tx, stderr_rx) = std::sync::mpsc::channel();
         thread::spawn(move || {
-            let mut b = Vec::new();
-            let _ = out.take((cap + 1) as u64).read_to_end(&mut b);
-            let _ = tx.send(b);
+            let mut bytes = Vec::new();
+            let _ = out.take((cap + 1) as u64).read_to_end(&mut bytes);
+            let _ = stdout_tx.send(bytes);
         });
         thread::spawn(move || {
-            let mut b = Vec::new();
-            let _ = err.take((cap + 1) as u64).read_to_end(&mut b);
-            let _ = tx2.send(b);
+            let mut bytes = Vec::new();
+            let _ = err.take((cap + 1) as u64).read_to_end(&mut bytes);
+            let _ = stderr_tx.send(bytes);
         });
         let deadline = Instant::now() + spec.timeout;
         let mut timed = false;
@@ -358,13 +363,10 @@ impl SandboxRunner for LinuxBubblewrap {
                 Err(e) => return Err(SandboxError::Spawn(e.to_string())),
             }
         }
-        let a = rx
-            .recv_timeout(spec.termination_grace + Duration::from_secs(1))
-            .unwrap_or_default();
-        let b = rx
-            .recv_timeout(spec.termination_grace + Duration::from_secs(1))
-            .unwrap_or_default();
-        let truncated = a.len() > cap || b.len() > cap;
+        let capture_deadline = spec.termination_grace + Duration::from_secs(1);
+        let stdout = stdout_rx.recv_timeout(capture_deadline).unwrap_or_default();
+        let stderr = stderr_rx.recv_timeout(capture_deadline).unwrap_or_default();
+        let truncated = stdout.len() > cap || stderr.len() > cap;
         let status = if timed {
             SandboxExit::Signalled
         } else if child
@@ -380,8 +382,8 @@ impl SandboxRunner for LinuxBubblewrap {
         };
         Ok(SandboxOutput {
             status,
-            stdout: a.into_iter().take(cap).collect(),
-            stderr: b.into_iter().take(cap).collect(),
+            stdout: stdout.into_iter().take(cap).collect(),
+            stderr: stderr.into_iter().take(cap).collect(),
             timed_out: timed,
             output_truncated: truncated,
         })
@@ -422,6 +424,16 @@ mod tests {
             Err(SandboxError::Unavailable) => {}
             Err(e) => panic!("unexpected sandbox error: {e:?}"),
         }
+    }
+
+    #[test]
+    fn loopback_policy_is_not_silently_treated_as_deny() {
+        let mut spec = base_spec(std::env::temp_dir());
+        spec.network = NetworkPolicy::LoopbackOnly;
+        assert!(matches!(
+            LinuxBubblewrap::default().run(&spec),
+            Err(SandboxError::PolicyViolation(_))
+        ));
     }
 
     #[test]
