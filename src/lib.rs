@@ -158,7 +158,7 @@ pub mod migrate;
 pub mod neural_embed;
 // Pro OctaSoma semantic memory (off-by-default `octasoma` feature): region-sharded,
 // embedding-based semantic anchors expanded through the causal graph — the
-// validated scope→rerank cascade. Compiling it is the cargo feature; *using* it is
+// validated scope→rerank cascade. Compiling it is this cargo feature; *using* it is
 // gated by the offline license (`Feature::OctaSomaMemory`). The default build
 // compiles none of it and stays deterministic + replay-exact. See the module docs.
 #[cfg(feature = "octasoma")]
@@ -206,6 +206,8 @@ pub mod query;
 pub mod release;
 pub mod retrieval;
 pub mod retrodict;
+#[cfg(feature = "rsi")]
+pub mod candidate_bridge;
 #[cfg(feature = "rsi")]
 pub mod rsi_bridge;
 #[cfg(feature = "rsi")]
