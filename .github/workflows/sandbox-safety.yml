@@ -41,25 +41,45 @@ jobs:
       - name: bootstrap locked dependencies (network allowed only here)
         run: cargo fetch --locked
 
-      - name: sandbox unit tests (fail-closed + resource policy)
+      - name: sandbox unit tests (fail-closed + hermetic runner policy)
         env:
           CARGO_NET_OFFLINE: "true"
         run: cargo test --release -p ccos-sandbox --locked -- --nocapture
 
-      - name: candidate protocol + sealed evaluator
+      - name: candidate protocol + sealed evaluator (std-only tier)
         env:
           CARGO_NET_OFFLINE: "true"
         run: cargo test --release -p rsi --locked candidate_ -- --nocapture
 
-      - name: CCOS primary-log candidate receipt chain
+      - name: canonical SciRust execution attestation gate
         env:
           CARGO_NET_OFFLINE: "true"
-        run: cargo test --release -p ccos-research-lab --features rsi --locked candidate_bridge -- --nocapture
+        run: >-
+          cargo test --release -p rsi
+          --features execution-attestation --locked
+          execution_attestation -- --nocapture
+
+      - name: repeated-seed disjoint holdout promotion gate
+        env:
+          CARGO_NET_OFFLINE: "true"
+        run: cargo test --release -p rsi --locked repeated_seed -- --nocapture
+
+      - name: CCOS primary-log candidate + evidence + adoption chain
+        env:
+          CARGO_NET_OFFLINE: "true"
+        run: >-
+          cargo test --release -p ccos-research-lab
+          --features rsi --locked candidate_bridge -- --nocapture
 
       - name: guarded DGM tier compiles locked
         env:
           CARGO_NET_OFFLINE: "true"
         run: cargo check --release -p ccos-research-lab --features rsi-dgm --locked
+
+      - name: Forge hermetic isolation helpers
+        env:
+          CARGO_NET_OFFLINE: "true"
+        run: cargo test --release -p forge-core --locked hermetic -- --nocapture
 
       - name: sandbox-elite injection tests (forge)
         env:
@@ -70,8 +90,10 @@ jobs:
         env:
           CARGO_NET_OFFLINE: "true"
         run: |
-          # The guarded evaluator must pin cargo offline; verify the pin exists.
-          grep -R 'CARGO_NET_OFFLINE\|--offline --frozen' -n src/rsi_bridge.rs crates/ccos-rsi/src | head -5
+          # The guarded evaluator and hermetic Cargo path must pin offline mode.
+          grep -R 'CARGO_NET_OFFLINE\|--offline\|--frozen' -n \
+            src/rsi_bridge.rs crates/ccos-rsi/src crates/ccos-sandbox/src \
+            crates/forge/forge-core/src/isolation.rs | head -20
           cargo test --release -p ccos-research-lab --features rsi --locked rsi_bridge -- --nocapture
 
       # ── Expansion contract (charter §42): the following classes MUST be
