@@ -112,7 +112,9 @@ impl std::fmt::Display for ScientificIntakeError {
             Self::InvalidJson(error) => write!(f, "invalid scientific bundle JSON: {error}"),
             Self::UnsupportedSchema(schema) => write!(f, "unsupported scientific schema: {schema}"),
             Self::InvalidField(field) => write!(f, "invalid scientific bundle field: {field}"),
-            Self::Serialization(error) => write!(f, "cannot serialize scientific audit record: {error}"),
+            Self::Serialization(error) => {
+                write!(f, "cannot serialize scientific audit record: {error}")
+            }
         }
     }
 }
@@ -199,7 +201,9 @@ pub fn import_scientific_bundle(
 
 fn validate_bundle(bundle: &ScientificBundleWire) -> Result<(), ScientificIntakeError> {
     if bundle.schema != SCIENTIFIC_BUNDLE_SCHEMA {
-        return Err(ScientificIntakeError::UnsupportedSchema(bundle.schema.clone()));
+        return Err(ScientificIntakeError::UnsupportedSchema(
+            bundle.schema.clone(),
+        ));
     }
     require_non_empty("paper.id", &bundle.paper.id)?;
     require_non_empty("paper.title", &bundle.paper.title)?;
@@ -225,7 +229,9 @@ fn validate_bundle(bundle: &ScientificBundleWire) -> Result<(), ScientificIntake
 
     for claim in &bundle.claims {
         if claim.schema != SCIENTIFIC_CLAIM_SCHEMA {
-            return Err(ScientificIntakeError::UnsupportedSchema(claim.schema.clone()));
+            return Err(ScientificIntakeError::UnsupportedSchema(
+                claim.schema.clone(),
+            ));
         }
         require_non_empty("claim.id", &claim.id)?;
         require_non_empty("claim.kind", &claim.kind)?;
