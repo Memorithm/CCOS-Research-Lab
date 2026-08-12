@@ -1,0 +1,25 @@
+# Temporary branch-only workflow used to measure the unfiltered Cargo advisory set.
+# This file is removed before the final pull request is ready for merge.
+name: Security Triage
+
+on:
+  push:
+    branches:
+      - fix/issue-3-dependabot-security
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  osv-unfiltered:
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+    with:
+      scan-args: |-
+        --lockfile=./Cargo.lock
+      upload-sarif: false
+      fail-on-vuln: false
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
