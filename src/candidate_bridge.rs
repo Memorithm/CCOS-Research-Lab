@@ -9,9 +9,8 @@ use std::collections::BTreeSet;
 
 use crate::event_log::{EventLog, EventPayload, EventType};
 use rsi::{
-    validate_adoption, validate_candidate, validate_evaluation, AdoptionReceipt,
-    CandidateEnvelope, CandidateProtocolError, ChampionChallengerPolicy, EvaluationReceipt,
-    SealedCandidateEvaluator,
+    validate_adoption, validate_candidate, validate_evaluation, AdoptionReceipt, CandidateEnvelope,
+    CandidateProtocolError, ChampionChallengerPolicy, EvaluationReceipt, SealedCandidateEvaluator,
 };
 
 #[derive(Debug)]
@@ -283,16 +282,9 @@ mod tests {
         let policy = ChampionChallengerPolicy::new("cc-v1", 0.10, 0.0).unwrap();
 
         let mut audit = CcosCandidateAudit::new("pipeline-test");
-        let measured = audit
-            .evaluate(&challenger_candidate, &evaluator)
-            .unwrap();
+        let measured = audit.evaluate(&challenger_candidate, &evaluator).unwrap();
         let adoption = audit
-            .decide_champion_challenger(
-                &champion,
-                &measured,
-                &policy,
-                Some("f".repeat(64)),
-            )
+            .decide_champion_challenger(&champion, &measured, &policy, Some("f".repeat(64)))
             .unwrap();
 
         assert_eq!(adoption.decision, AdoptionDecision::Promote);
