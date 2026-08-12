@@ -198,6 +198,8 @@ pub mod slha_full;
 // tiers is runtime-gated by the offline license (`Feature::RsiSelfImprovement` /
 // `Feature::RsiDgm`) via `RsiAccess`/`DgmAccess::unlock`. See `src/rsi_bridge.rs`
 // and `docs/P3_HANDOFF.md`.
+#[cfg(feature = "rsi")]
+pub mod candidate_bridge;
 pub mod egress;
 pub mod parser;
 pub mod persist;
@@ -206,8 +208,6 @@ pub mod query;
 pub mod release;
 pub mod retrieval;
 pub mod retrodict;
-#[cfg(feature = "rsi")]
-pub mod candidate_bridge;
 #[cfg(feature = "rsi")]
 pub mod rsi_bridge;
 #[cfg(feature = "rsi")]
