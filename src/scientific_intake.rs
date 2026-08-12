@@ -639,10 +639,7 @@ fn validate_provenance(
         "provenance.extracted_content_sha256",
         &provenance.extracted_content_sha256,
     )?;
-    validate_sha256(
-        "provenance.analysis_sha256",
-        &provenance.analysis_sha256,
-    )?;
+    validate_sha256("provenance.analysis_sha256", &provenance.analysis_sha256)?;
     if let Some(expected) = expected_paper_id {
         if provenance.paper_id != expected {
             return Err(ScientificIntakeError::InvalidField(
@@ -668,11 +665,7 @@ fn validate_identifier(name: &str, value: &str) -> Result<(), ScientificIntakeEr
     }
 }
 
-fn validate_enum(
-    name: &str,
-    value: &str,
-    allowed: &[&str],
-) -> Result<(), ScientificIntakeError> {
+fn validate_enum(name: &str, value: &str, allowed: &[&str]) -> Result<(), ScientificIntakeError> {
     if allowed.contains(&value) {
         Ok(())
     } else {
