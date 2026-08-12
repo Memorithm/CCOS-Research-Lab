@@ -30,6 +30,10 @@ path = "src/lib.rs"
 default = []
 # Méta-optimiseur ℳ et substrat P_eff adossés au moteur Forge (exécution réelle).
 forge = ["dep:forge-core", "dep:rand", "dep:serde"]
+# Verify canonical SciRust ExecutionAttestation JSON before a fingerprint can be
+# copied into an EvaluationReceipt. Off by default so the std-only RSI core keeps
+# its zero-protocol-dependency boundary.
+execution-attestation = ["dep:scirust-agent-protocol", "dep:serde_json"]
 # Mémoire contextuelle C adossée au moteur de mémoire fractale OctaSoma.
 octasoma = ["dep:octasoma"]
 # CCOS_EXTENDED (plan P3): the `ccos` cargo feature is GONE (circular-dep
@@ -72,6 +76,8 @@ forge-core = { path = "../forge/forge-core", optional = true }
 octasoma = { path = "../ccos-octasoma", optional = true }
 rand = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+scirust-agent-protocol = { path = "../scirust-agent-protocol", optional = true }
 scirust-rsi = { git = "https://github.com/Memorithm/scirust", rev = "5c7e43b399d3247d68a957faf5e13f147e48a7ef", optional = true }
 ureq = { version = "2", optional = true }
 wasmi = { version = "0.31", optional = true }
