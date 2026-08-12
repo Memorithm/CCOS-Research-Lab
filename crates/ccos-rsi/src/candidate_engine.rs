@@ -3,6 +3,10 @@
 //! CCOS-side code should depend on [`SealedCandidateEvaluator`], not on a raw
 //! harness. The concrete sandbox adapter validates the candidate before running
 //! anything and validates the returned receipt before releasing it upstream.
+//! Execution-profile provenance is also sealed here: a harness may provide raw
+//! SciRust attestation JSON, but it cannot authoritatively provide the resulting
+//! profile fingerprint. The sealed evaluator recomputes that fingerprint after
+//! canonical `ExecutionAttestation::verify()` succeeds.
 
 use ccos_sandbox::SandboxRunner;
 
@@ -19,6 +23,50 @@ pub trait SealedCandidateEvaluator {
     ) -> Result<EvaluationReceipt, CandidateProtocolError>;
 }
 
+/// Supplies untrusted wire bytes for the optional SciRust execution attestation.
+///
+/// Implementors do not get to choose the fingerprint stored in the final
+/// `EvaluationReceipt`; the sealed evaluator below verifies and recomputes it.
+pub trait CandidateExecutionAttestation {
+    fn execution_attestation_json(
+        &self,
+        candidate: &CandidateEnvelope,
+    ) -> Result<Option<Vec<u8>>, CandidateProtocolError>;
+}
+
+#[cfg(feature = "execution-attestation")]
+fn verified_execution_profile_sha256(
+    encoded: Option<&[u8]>,
+) -> Result<Option<String>, CandidateProtocolError> {
+    let Some(encoded) = encoded else {
+        return Ok(None);
+    };
+    let attestation: scirust_agent_protocol::ExecutionAttestation =
+        serde_json::from_slice(encoded).map_err(|error| {
+            CandidateProtocolError::PolicyViolation(format!(
+                "invalid SciRust execution-attestation JSON: {error}"
+            ))
+        })?;
+    attestation.verify().map_err(|error| {
+        CandidateProtocolError::PolicyViolation(format!(
+            "SciRust execution attestation failed verification: {error:?}"
+        ))
+    })?;
+    Ok(Some(attestation.profile_sha256.as_str().to_string()))
+}
+
+#[cfg(not(feature = "execution-attestation"))]
+fn verified_execution_profile_sha256(
+    encoded: Option<&[u8]>,
+) -> Result<Option<String>, CandidateProtocolError> {
+    if encoded.is_some() {
+        return Err(CandidateProtocolError::PolicyViolation(
+            "execution attestation supplied but rsi/execution-attestation is disabled".into(),
+        ));
+    }
+    Ok(None)
+}
+
 pub struct SandboxCandidateEvaluator<R, H> {
     evaluator: GuardedCandidateEvaluator<R>,
     harness: H,
@@ -27,7 +75,7 @@ pub struct SandboxCandidateEvaluator<R, H> {
 impl<R, H> SandboxCandidateEvaluator<R, H>
 where
     R: SandboxRunner,
-    H: CandidateHarness,
+    H: CandidateHarness + CandidateExecutionAttestation,
 {
     pub fn new(runner: R, harness: H) -> Self {
         Self {
@@ -40,14 +88,22 @@ where
 impl<R, H> SealedCandidateEvaluator for SandboxCandidateEvaluator<R, H>
 where
     R: SandboxRunner,
-    H: CandidateHarness,
+    H: CandidateHarness + CandidateExecutionAttestation,
 {
     fn evaluate(
         &self,
         candidate: &CandidateEnvelope,
     ) -> Result<EvaluationReceipt, CandidateProtocolError> {
         validate_candidate(candidate)?;
-        let receipt = self.evaluator.evaluate(candidate, &self.harness)?;
+        let attestation_json = self.harness.execution_attestation_json(candidate)?;
+        let verified_profile = verified_execution_profile_sha256(attestation_json.as_deref())?;
+
+        // The lower-level portable protocol still carries a string slot for
+        // execution identity, but that value has no authority at this boundary.
+        // Replace it with the fingerprint recomputed from the verified SciRust
+        // attestation (or None when no attestation is present).
+        let mut receipt = self.evaluator.evaluate(candidate, &self.harness)?;
+        receipt.execution_profile_sha256 = verified_profile;
         validate_evaluation(candidate, &receipt)?;
         Ok(receipt)
     }
@@ -63,9 +119,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::candidate_protocol::{
-        CandidateOrigin, ObjectiveValue, PreparedEvaluation,
-    };
+    use crate::candidate_protocol::{CandidateOrigin, ObjectiveValue, PreparedEvaluation};
 
     #[derive(Clone, Copy)]
     struct Runner;
@@ -83,6 +137,15 @@ mod tests {
     }
 
     struct Harness;
+
+    impl CandidateExecutionAttestation for Harness {
+        fn execution_attestation_json(
+            &self,
+            _candidate: &CandidateEnvelope,
+        ) -> Result<Option<Vec<u8>>, CandidateProtocolError> {
+            Ok(None)
+        }
+    }
 
     impl CandidateHarness for Harness {
         fn prepare(
@@ -107,6 +170,8 @@ mod tests {
                 },
                 evaluator_id: "test-evaluator-v1".into(),
                 sandbox_policy_id: "test-airgap-v1".into(),
+                // Deliberately bogus: the sealed evaluator must remove this
+                // self-asserted value because no verified attestation exists.
                 execution_profile_sha256: Some("a".repeat(64)),
                 verifier_sha256: Some("b".repeat(64)),
             })
@@ -140,6 +205,7 @@ mod tests {
         let candidate = candidate();
         let receipt = evaluator.evaluate(&candidate).unwrap();
         assert_eq!(receipt.candidate_fingerprint, candidate.fingerprint());
+        assert_eq!(receipt.execution_profile_sha256, None);
     }
 
     #[test]
@@ -148,5 +214,97 @@ mod tests {
         let mut candidate = candidate();
         candidate.candidate_id = "0".repeat(64);
         assert!(evaluator.evaluate(&candidate).is_err());
+    }
+
+    #[cfg(feature = "execution-attestation")]
+    mod execution_attestation_tests {
+        use super::*;
+        use scirust_agent_protocol::{
+            ExecutionArchitecture, ExecutionArchitectureFamily, ExecutionAttestation,
+            ExecutionBackendKind, ExecutionProfile, ExecutionReproducibility, Sha256Digest,
+            EXECUTION_PROFILE_SCHEMA_VERSION,
+        };
+
+        struct AttestedHarness {
+            encoded: Vec<u8>,
+        }
+
+        impl CandidateExecutionAttestation for AttestedHarness {
+            fn execution_attestation_json(
+                &self,
+                _candidate: &CandidateEnvelope,
+            ) -> Result<Option<Vec<u8>>, CandidateProtocolError> {
+                Ok(Some(self.encoded.clone()))
+            }
+        }
+
+        impl CandidateHarness for AttestedHarness {
+            fn prepare(
+                &self,
+                _candidate: &CandidateEnvelope,
+            ) -> Result<PreparedEvaluation, CandidateProtocolError> {
+                Harness.prepare(_candidate)
+            }
+
+            fn parse_objectives(
+                &self,
+                candidate: &CandidateEnvelope,
+                output: &SandboxOutput,
+            ) -> Result<Vec<ObjectiveValue>, CandidateProtocolError> {
+                Harness.parse_objectives(candidate, output)
+            }
+        }
+
+        fn digest(byte: u8) -> Sha256Digest {
+            Sha256Digest::parse(format!("{byte:02x}").repeat(32)).unwrap()
+        }
+
+        fn encoded_attestation() -> Vec<u8> {
+            let attestation = ExecutionAttestation::new(ExecutionProfile {
+                schema_version: EXECUTION_PROFILE_SCHEMA_VERSION,
+                backend: ExecutionBackendKind::Cuda,
+                device_ordinal: 0,
+                architecture: ExecutionArchitecture {
+                    family: ExecutionArchitectureFamily::NvidiaGpu,
+                    name: Some("sm_110".into()),
+                },
+                capability_profile_sha256: digest(0x11),
+                topology_profile_sha256: digest(0x22),
+                memory_budget_bytes: Some(8 * 1024 * 1024 * 1024),
+                numeric_mode: "bf16_tensor_core".into(),
+                reproducibility: ExecutionReproducibility::Deterministic,
+                kernel_semantic_version: "sciagent.decode.v1".into(),
+                sampler_semantic_version: Some("resident_sampler.v1".into()),
+                model_sha256: digest(0x33),
+                tokenizer_sha256: digest(0x44),
+            })
+            .unwrap();
+            serde_json::to_vec(&attestation).unwrap()
+        }
+
+        #[test]
+        fn sealed_receipt_uses_verified_scirust_fingerprint() {
+            let harness = AttestedHarness {
+                encoded: encoded_attestation(),
+            };
+            let evaluator = SandboxCandidateEvaluator::new(Runner, harness);
+            let receipt = evaluator.evaluate(&candidate()).unwrap();
+            assert_eq!(
+                receipt.execution_profile_sha256.as_deref(),
+                Some("f0423da9a3c6c2e43f6e75acd4cd017bd020a0f21d65112a73d1076026c10826")
+            );
+        }
+
+        #[test]
+        fn tampered_scirust_attestation_fails_before_receipt_release() {
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&encoded_attestation()).unwrap();
+            value["profile"]["numeric_mode"] = serde_json::json!("f32");
+            let harness = AttestedHarness {
+                encoded: serde_json::to_vec(&value).unwrap(),
+            };
+            let evaluator = SandboxCandidateEvaluator::new(Runner, harness);
+            assert!(evaluator.evaluate(&candidate()).is_err());
+        }
     }
 }
