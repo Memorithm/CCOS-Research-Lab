@@ -780,9 +780,16 @@ mod tests {
         let receipt = import_experiment_proposal(&proposal(), &mut log).unwrap();
         assert_eq!(receipt.id, "exp-1");
         assert_eq!(log.event_count(), 1);
+        let EventPayload::Custom { key, value } = &log.events[0].payload else {
+            panic!("proposal audit must use EventPayload::Custom");
+        };
+        assert_eq!(key, "papers_experiment_proposal_v1");
+        let audit: serde_json::Value = serde_json::from_str(value).unwrap();
+        assert_eq!(
+            audit["resource_limits"]["timeout_seconds"].as_u64(),
+            Some(30)
+        );
         let serialized = serde_json::to_string(&log).unwrap();
-        assert!(serialized.contains("papers_experiment_proposal_v1"));
-        assert!(serialized.contains("\"timeout_seconds\":30"));
         assert!(!serialized.contains("untrusted hypothesis"));
         assert!(!serialized.contains("try method X"));
     }
