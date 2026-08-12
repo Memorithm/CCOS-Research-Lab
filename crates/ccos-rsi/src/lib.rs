@@ -116,6 +116,8 @@ pub use candidate_engine::CandidateExecutionAttestation;
 pub use candidate_engine::{SandboxCandidateEvaluator, SealedCandidateEvaluator};
 pub use candidate_policy::{
     validate_adoption, validate_candidate, validate_evaluation, ChampionChallengerPolicy,
+    EvaluationPair, PromotionEvidenceBundle, RepeatedSeedDecision, RepeatedSeedPromotionPolicy,
+    SeedEvidence,
 };
 pub use candidate_protocol::{
     AdoptionDecision, AdoptionReceipt, CandidateEnvelope, CandidateHarness, CandidateOrigin,
