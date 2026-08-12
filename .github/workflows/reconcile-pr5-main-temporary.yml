@@ -1,0 +1,96 @@
+name: temporary-reconcile-pr5-main
+
+on:
+  push:
+    branches: [fix/issue-3-dependabot-security]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: temporary-reconcile-pr5-main
+  cancel-in-progress: true
+
+jobs:
+  reconcile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: fix/issue-3-dependabot-security
+          fetch-depth: 0
+      - run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt
+      - name: Merge current main and resolve reviewed overlap
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          set +e
+          git merge --no-commit --no-ff origin/main
+          merge_rc=$?
+          set -e
+
+          # Never let the Actions token publish workflow-file changes. The
+          # branch workflows are aligned separately through the GitHub API.
+          for f in .github/workflows/audit.yml .github/workflows/ci.yml .github/workflows/security.yml .github/workflows/sandbox-safety.yml; do
+            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              git checkout HEAD -- "$f"
+              git add "$f"
+            fi
+          done
+
+          if git ls-files -u -- Cargo.lock | grep -q .; then
+            git checkout --theirs -- Cargo.lock
+            git add Cargo.lock
+          fi
+
+          # PR5 owns only the scirust-rsi source choice in this manifest.
+          # Start from canonical main (including OctaSoma v0.5) and re-apply
+          # the audited local vendor path.
+          git show origin/main:crates/ccos-rsi/Cargo.toml > crates/ccos-rsi/Cargo.toml
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('crates/ccos-rsi/Cargo.toml')
+          s = p.read_text()
+          old = 'scirust-rsi = { git = "https://github.com/Memorithm/scirust", rev = "5c7e43b399d3247d68a957faf5e13f147e48a7ef", optional = true }'
+          new = '# Vendored from Memorithm/scirust at 5c7e43b399d3247d68a957faf5e13f147e48a7ef.\n# Keeping this as a local path is required by the offline sandbox-safety gate.\nscirust-rsi = { path = "../../vendor/scirust-rsi", optional = true }'
+          if old not in s:
+              raise SystemExit('canonical scirust-rsi anchor changed; refusing blind merge')
+          s = s.replace(old, new, 1)
+          s = s.replace('Moteur d’ascension réel `scirust-rsi` (dépendance git Memorithm/scirust).', 'Moteur d’ascension réel `scirust-rsi` (snapshot local épinglé et auditable).')
+          p.write_text(s)
+          PY
+          git add crates/ccos-rsi/Cargo.toml
+
+          unresolved="$(git diff --name-only --diff-filter=U)"
+          if [ -n "$unresolved" ]; then
+            echo "Unexpected unresolved conflicts:" >&2
+            echo "$unresolved" >&2
+            exit 1
+          fi
+
+      - name: Reconcile lockfile and validate security graph
+        run: |
+          set -euo pipefail
+          cargo +1.89.0 fmt --package rsi --check
+          cargo +1.89.0 fmt --manifest-path crates/forge/forge-core/Cargo.toml -- --check
+          cargo +1.89.0 check -p rsi --features scirust,wasm
+          cargo +1.89.0 check -p forge-core --locked
+          cargo +1.89.0 check -p slha-python --locked
+          cargo +1.89.0 check --workspace --locked
+          cargo +1.89.0 tree -p rsi --features scirust --locked | tee /tmp/rsi-tree.txt
+          if grep -F 'https://github.com/Memorithm/scirust' /tmp/rsi-tree.txt; then
+            echo 'forbidden scirust Git source remains in RSI graph' >&2
+            exit 1
+          fi
+          git diff --check
+
+      - name: Commit reconciled main
+        run: |
+          set -euo pipefail
+          git add -A
+          git diff --cached --check
+          git commit -m "merge: reconcile security hardening with current main"
+          git push origin HEAD:fix/issue-3-dependabot-security
