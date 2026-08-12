@@ -5,14 +5,14 @@
 //! canonically-linked receipt payloads into the primary CCOS hash-chained
 //! `EventLog`. Repeated synchronization is idempotent.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::event_log::{EventLog, EventPayload, EventType};
 use rsi::{
     validate_adoption, validate_candidate, validate_evaluation, AdoptionDecision, AdoptionReceipt,
-    CandidateEnvelope, CandidateProtocolError, ChampionChallengerPolicy, EvaluationPair,
-    EvaluationReceipt, PromotionEvidenceBundle, RepeatedSeedDecision, RepeatedSeedPromotionPolicy,
-    SealedCandidateEvaluator,
+    CandidateEnvelope, CandidateProtocolError, ChampionChallengerPolicy, CounterexampleWitness,
+    EvaluationPair, EvaluationReceipt, PromotionEvidenceBundle, RepeatedSeedDecision,
+    RepeatedSeedPromotionPolicy, SealedCandidateEvaluator,
 };
 
 #[derive(Debug)]
@@ -21,6 +21,8 @@ pub struct CcosCandidateAudit {
     candidates: BTreeSet<String>,
     evaluations: BTreeSet<String>,
     promotion_evidence: BTreeSet<String>,
+    counterexamples_by_candidate: BTreeMap<String, BTreeSet<String>>,
+    counterexample_vetoes: BTreeSet<String>,
     adoptions: BTreeSet<String>,
 }
 
@@ -31,6 +33,8 @@ impl CcosCandidateAudit {
             candidates: BTreeSet::new(),
             evaluations: BTreeSet::new(),
             promotion_evidence: BTreeSet::new(),
+            counterexamples_by_candidate: BTreeMap::new(),
+            counterexample_vetoes: BTreeSet::new(),
             adoptions: BTreeSet::new(),
         }
     }
@@ -76,6 +80,11 @@ impl CcosCandidateAudit {
 
     /// Hard promotion path. All selection and holdout evaluations must already
     /// exist in the primary CCOS chain. Evidence is written before adoption.
+    ///
+    /// A previously audited semantic counterexample for the challenger's
+    /// content-addressed candidate id is an unconditional promotion veto. The
+    /// veto is itself appended once to the primary EventLog, together with the
+    /// repeated-seed evidence fingerprint that would otherwise have promoted.
     pub fn decide_repeated_seed(
         &mut self,
         selection: &[EvaluationPair<'_>],
@@ -85,6 +94,31 @@ impl CcosCandidateAudit {
     ) -> Result<RepeatedSeedDecision, CandidateProtocolError> {
         let decision = policy.decide(selection, holdout, promoted_artifact_sha256)?;
         self.record_promotion_evidence(decision.evidence())?;
+
+        if decision.adoption().decision == AdoptionDecision::Promote {
+            let challenger_id = decision.evidence().challenger_candidate_id();
+            if let Some(counterexamples) = self.counterexamples_by_candidate.get(challenger_id) {
+                if let Some(counterexample) = counterexamples.iter().next() {
+                    let evidence = decision.evidence().fingerprint();
+                    let veto_key = format!("{challenger_id}:{counterexample}:{evidence}");
+                    if self.counterexample_vetoes.insert(veto_key) {
+                        self.log.append(
+                            EventType::AgentAction,
+                            EventPayload::Custom {
+                                key: "candidate_promotion_veto_v1".to_string(),
+                                value: format!(
+                                    "candidate={challenger_id};counterexample={counterexample};evidence={evidence}"
+                                ),
+                            },
+                        );
+                    }
+                    return Err(CandidateProtocolError::PolicyViolation(format!(
+                        "promotion vetoed by audited counterexample {counterexample} for candidate {challenger_id}"
+                    )));
+                }
+            }
+        }
+
         let anchor = selection
             .iter()
             .chain(holdout.iter())
@@ -141,6 +175,49 @@ impl CcosCandidateAudit {
             },
         );
         Ok(self.log.chain_head())
+    }
+
+    /// Record a validated minimized counterexample against one exact candidate
+    /// envelope, then index it by the candidate's content-addressed id so the
+    /// veto survives across later trial/holdout envelopes for the same code.
+    pub fn record_counterexample(
+        &mut self,
+        candidate: &CandidateEnvelope,
+        witness: &CounterexampleWitness,
+    ) -> Result<String, CandidateProtocolError> {
+        witness.validate(candidate)?;
+        if !self.candidates.contains(&candidate.fingerprint()) {
+            return Err(CandidateProtocolError::PolicyViolation(
+                "candidate must be recorded before its counterexample".into(),
+            ));
+        }
+
+        let fingerprint = witness.receipt.fingerprint();
+        let candidate_receipts = self
+            .counterexamples_by_candidate
+            .entry(candidate.candidate_id.clone())
+            .or_default();
+        if !candidate_receipts.insert(fingerprint.clone()) {
+            return Ok(self.log.chain_head());
+        }
+        self.log.append(
+            EventType::AgentAction,
+            EventPayload::Custom {
+                key: "candidate_counterexample_v1".to_string(),
+                value: format!(
+                    "candidate_id={};{}",
+                    candidate.candidate_id,
+                    witness.receipt.audit_payload()
+                ),
+            },
+        );
+        Ok(self.log.chain_head())
+    }
+
+    pub fn has_counterexample(&self, candidate_id: &str) -> bool {
+        self.counterexamples_by_candidate
+            .get(candidate_id)
+            .is_some_and(|receipts| !receipts.is_empty())
     }
 
     pub fn record_promotion_evidence(
@@ -215,7 +292,9 @@ impl CcosCandidateAudit {
 mod tests {
     use super::*;
     use rsi::{
-        AdoptionReceipt, CandidateOrigin, EvaluationStatus, ObjectiveValue,
+        AdoptionReceipt, CandidateOrigin, ChunkDeletionShrinker, CounterexampleConfig,
+        CounterexampleEngine, CounterexampleGenerator, CounterexampleOracle,
+        CounterexampleSearchResult, EvaluationStatus, ObjectiveValue, OracleVerdict,
         CANDIDATE_PROTOCOL_VERSION,
     };
 
@@ -456,6 +535,121 @@ mod tests {
             .contains(&decision.evidence().fingerprint()));
         assert_eq!(audit.event_log().events.len(), 18);
         assert!(audit.event_log().verify_integrity().valid);
+    }
+
+    struct OneCaseGenerator;
+
+    impl CounterexampleGenerator for OneCaseGenerator {
+        fn generator_id(&self) -> &str {
+            "ccos-one-case-v1"
+        }
+
+        fn generate(
+            &self,
+            _seed: u64,
+            _ordinal: u64,
+        ) -> Result<Vec<u8>, CandidateProtocolError> {
+            Ok(vec![1, 42, 2])
+        }
+    }
+
+    struct Contains42Oracle;
+
+    impl CounterexampleOracle for Contains42Oracle {
+        fn oracle_id(&self) -> &str {
+            "ccos-contains-42-v1"
+        }
+
+        fn contract_sha256(&self) -> &str {
+            "abababababababababababababababababababababababababababababababab"
+        }
+
+        fn evaluate(
+            &self,
+            _candidate: &CandidateEnvelope,
+            input: &[u8],
+        ) -> Result<OracleVerdict, CandidateProtocolError> {
+            if input.contains(&42) {
+                Ok(OracleVerdict::Counterexample {
+                    failure_kind: "contains-42".into(),
+                })
+            } else {
+                Ok(OracleVerdict::Pass)
+            }
+        }
+    }
+
+    #[test]
+    fn audited_counterexample_vetoes_same_challenger_across_holdout_seeds() {
+        let s1 = pair(101, 80.0);
+        let s2 = pair(102, 82.0);
+        let h1 = pair(201, 84.0);
+        let h2 = pair(202, 83.0);
+        assert_eq!(s1.2.candidate_id, h2.2.candidate_id);
+
+        let selection = [
+            EvaluationPair {
+                champion_candidate: &s1.0,
+                champion: &s1.1,
+                challenger_candidate: &s1.2,
+                challenger: &s1.3,
+            },
+            EvaluationPair {
+                champion_candidate: &s2.0,
+                champion: &s2.1,
+                challenger_candidate: &s2.2,
+                challenger: &s2.3,
+            },
+        ];
+        let holdout = [
+            EvaluationPair {
+                champion_candidate: &h1.0,
+                champion: &h1.1,
+                challenger_candidate: &h1.2,
+                challenger: &h1.3,
+            },
+            EvaluationPair {
+                champion_candidate: &h2.0,
+                champion: &h2.1,
+                challenger_candidate: &h2.2,
+                challenger: &h2.3,
+            },
+        ];
+        let policy =
+            RepeatedSeedPromotionPolicy::new("repeat-v1", 2, 2, 0.10, 0.0, 10_000).unwrap();
+        let engine = CounterexampleEngine::new(
+            OneCaseGenerator,
+            ChunkDeletionShrinker,
+            Contains42Oracle,
+            CounterexampleConfig::new(1, 32, 64).unwrap(),
+        )
+        .unwrap();
+        let witness = match engine.search(&s1.2, 9001).unwrap() {
+            CounterexampleSearchResult::Found(witness) => witness,
+            CounterexampleSearchResult::NoCounterexample { .. } => panic!("witness expected"),
+        };
+        assert_eq!(witness.minimized_input, vec![42]);
+
+        let mut audit = CcosCandidateAudit::new("counterexample-veto-test");
+        for pair in [&s1, &s2, &h1, &h2] {
+            record_pair(&mut audit, pair);
+        }
+        audit.record_counterexample(&s1.2, &witness).unwrap();
+        audit.record_counterexample(&s1.2, &witness).unwrap();
+        assert!(audit.has_counterexample(&h2.2.candidate_id));
+
+        let error = audit
+            .decide_repeated_seed(&selection, &holdout, &policy, Some("f".repeat(64)))
+            .unwrap_err();
+        assert!(format!("{error}").contains("promotion vetoed by audited counterexample"));
+        assert_eq!(audit.event_log().events.len(), 19);
+        assert!(audit.event_log().verify_integrity().valid);
+
+        let again = audit
+            .decide_repeated_seed(&selection, &holdout, &policy, Some("f".repeat(64)))
+            .unwrap_err();
+        assert!(format!("{again}").contains("promotion vetoed by audited counterexample"));
+        assert_eq!(audit.event_log().events.len(), 19);
     }
 
     #[test]
