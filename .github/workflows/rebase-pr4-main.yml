@@ -1,12 +1,87 @@
 name: Rebase PR4 on current main
 
-on: workflow_dispatch
+on:
+  push:
+    branches: ["feat/papers-scientific-intake-v1"]
 
 permissions:
   contents: write
 
+concurrency:
+  group: rebase-pr4-main
+  cancel-in-progress: true
+
 jobs:
-  paused:
+  merge-main:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
-      - run: echo "PR4 helper paused while CI workflow is synchronized through the GitHub API"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: feat/papers-scientific-intake-v1
+          fetch-depth: 0
+      - run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt
+      - name: Merge current main and preserve scientific intake
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          set +e
+          git merge --no-commit --no-ff origin/main
+          merge_rc=$?
+          set -e
+
+          if [ "$merge_rc" -ne 0 ]; then
+            if git ls-files -u -- .github/workflows/ci.yml | grep -q .; then
+              git checkout --theirs -- .github/workflows/ci.yml
+              git add .github/workflows/ci.yml
+            fi
+            if git ls-files -u -- src/lib.rs | grep -q .; then
+              git checkout --theirs -- src/lib.rs
+              git add src/lib.rs
+            fi
+          fi
+
+          cat > /tmp/reapply_pr4.py <<'PY'
+          from pathlib import Path
+          path = Path('src/lib.rs')
+          text = path.read_text()
+          if 'pub mod scientific_intake;' not in text:
+              anchor = 'pub mod sanitizer;\n'
+              if anchor not in text:
+                  raise SystemExit('src/lib.rs module anchor changed; refusing blind edit')
+              text = text.replace(anchor, anchor + 'pub mod scientific_intake;\n', 1)
+          export = 'pub use scientific_intake::{\n    import_scientific_bundle, ScientificIntakeError, ScientificIntakeReceipt,\n};\n'
+          if 'pub use scientific_intake::' not in text:
+              anchor = 'pub use persist::KernelSnapshot;\n'
+              if anchor not in text:
+                  raise SystemExit('src/lib.rs export anchor changed; refusing blind edit')
+              text = text.replace(anchor, anchor + export, 1)
+          path.write_text(text)
+          PY
+          python3 /tmp/reapply_pr4.py
+          git add src/lib.rs
+
+          unresolved="$(git diff --name-only --diff-filter=U)"
+          if [ -n "$unresolved" ]; then
+            echo "Unexpected unresolved conflicts:" >&2
+            echo "$unresolved" >&2
+            exit 1
+          fi
+
+      - name: Validate scientific intake on merged graph
+        run: |
+          set -euo pipefail
+          cargo +1.89.0 fmt --package ccos-research-lab --check
+          cargo +1.89.0 check --workspace --locked
+          cargo +1.89.0 test --locked scientific -- --nocapture
+          git diff --check
+
+      - name: Commit and push merge
+        run: |
+          set -euo pipefail
+          git add -A
+          git diff --cached --check
+          git commit -m "merge: refresh scientific intake on RSI main"
+          git push origin HEAD:feat/papers-scientific-intake-v1
