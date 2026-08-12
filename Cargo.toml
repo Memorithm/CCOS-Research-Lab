@@ -125,9 +125,7 @@ rsi = { path = "crates/ccos-rsi", optional = true }
 # accurate than the line heuristic on real code (two-thirds vs full import recall —
 # see docs/MEASUREMENT_ast.md), and `syn`/`proc-macro2` are already in the tree via
 # serde's derive, so defaulting to it pulls **no new dependency**. Still no async
-# runtime and no TLS — a consumer of `ccos::memory` / `ccos::event_log` pulls neither
-# tokio nor reqwest. Opt out with `--no-default-features` for the zero-extra-dependency
-# line-based heuristic (kept as the fallback for non-Rust / unparseable input).
+# runtime and no TLS — a consumer of the sync core pulls neither tokio nor reqwest.
 default = ["syn-parser"]
 # The LLM / eval / workspace modules and the `ccos` binary (which drives them).
 llm = ["dep:tokio", "dep:reqwest"]
@@ -135,116 +133,51 @@ syn-parser = ["dep:syn", "dep:proc-macro2"]
 mimalloc = ["dep:mimalloc"]
 # Opt-in **learned** semantic embedder: distil the deterministic INT4 TF-IDF into
 # a latent-semantic (LSA / truncated-SVD) projection learned from the corpus's own
-# term co-occurrence. Zero new dependencies and fully deterministic (a fixed Jacobi
-# sweep), so the replay invariant holds; the default build keeps raw TF-IDF, the
-# measured baseline. See `src/lsa.rs` and ROADMAP "better retrieval — slice B".
+# term co-occurrence. Zero new dependencies and fully deterministic.
 learned-embed = []
-# Offline **Pro license** verification: a locally signed (ed25519) token checked
-# against a baked-in public key. Pulls in `ed25519-dalek`; the default build has no
-# cryptography and runs in the free community tier. Nothing leaves the host.
+# Offline **Pro license** verification.
 license = ["dep:ed25519-dalek"]
-# Offline **post-quantum** Pro license verification: a second, scheme-tagged
-# (`slhdsa.`) token verified against a baked-in SLH-DSA (FIPS 205) public key.
-# Orthogonal to `license` — a build may enable one, the other, or both (the
-# `slhdsa.` prefix dispatches which verifier checks a given token). Pulls in
-# `slh-dsa`; still no cryptography in the default build.
+# Offline post-quantum Pro license verification.
 license-pq = ["dep:lattice-slh-dsa"]
-# **Signed multi-agent sync**: per-workspace ed25519 identity keys; `sync export`
-# signs the canonical bundle payload and `sync import` verifies + TOFU-pins the
-# key per agent id (spoofing and silent key swaps refused). Reuses the SAME
-# optional `ed25519-dalek` as `license` plus the in-tree `getrandom` for keygen —
-# no new crate. The default build stays crypto-free: unsigned bundles work
-# unchanged, and a *signed* bundle is refused with a rebuild hint rather than
-# silently accepted unverified.
+# Signed multi-agent sync.
 signed-sync = ["dep:ed25519-dalek", "dep:getrandom"]
-# Opt-in **SLHAv2 memory backend**: pulls the `ccos-memory-runtime` middleware
-# crate — a **zero-dependency** SLHAv2 tile backend (HOT→WARM tile compression:
-# 128→96 B, latent preserved) that vendors the minimal decode logic, so it pulls
-# **no `scirust`** (verify: `cargo tree --features slhav2 | grep scirust` → none).
-# Off by default → the default build is byte-identical. `cargo build --features slhav2`.
+# Opt-in SLHAv2 memory backend.
 slhav2 = ["dep:ccos-memory-runtime"]
-# **SLHAv2 FULL kernel** (CCOS_EXTENDED, plan P1): in addition to the distilled
-# `slhav2` backend (zero-dep, `replay == live`), link the REAL `ccos-scirust`
-# kernel as a second `MemoryProvider` backend (`ScirustBackend`): runtime-dispatched
-# SIMD `compute_score`, `ElasticKvCache` HOT/WARM/COLD soft-paging with informed
-# eviction (plan axis A5), and the `LatentSafetyGuard`. This is a **REPLAY-RELAX**:
-# the SIMD accumulation order and the elastic cache's runtime-stateful importance
-# tracking make bit-exact replay impossible, so it is OFF by default and gated at
-# runtime by the offline license (`Feature::SlhAv2FullKernel`). The default and
-# `slhav2` builds stay `scirust`-free and byte-identical
-# (`cargo tree --features slhav2-full | grep scirust` shows scirust; default/slhav2
-#  show none). See `crates/ccos-memory-runtime/src/backend/scirust_full.rs` and
-# `docs/DETERMINISM.md`.
+# SLHAv2 full kernel — documented replay relax.
 slhav2-full = ["dep:ccos-memory-runtime", "ccos-memory-runtime/slhav2-full", "dep:ccos-scirust"]
-# **Quarantined neural embedder** (the paper's future-work item 1): a
-# `retrieval::Encoder` over a LOCAL Ollama-style `/api/embeddings` endpoint
-# (e.g. `nomic-embed-text`). Off by default because a neural embedder cannot
-# promise bit-exact replay (weights/server/hardware-dependent) — the flag IS the
-# quarantine. Pulls **no new crate**: only the blocking client of the `reqwest`
-# already in the tree for `llm`. Local server ⇒ nothing leaves the host.
+# Quarantined neural embedder.
 neural-embed = ["dep:reqwest", "reqwest/blocking"]
-# Opt-in **OctaSoma semantic memory** (Pro): region-sharded, embedding-based
-# semantic anchors backed by the `octasoma` engine, expanded through the causal
-# graph — the validated scope→rerank cascade. Compiling it is this cargo feature;
-# *using* it is gated at runtime by the offline license
-# (`Feature::OctaSomaMemory`), like every Pro capability. The free core recall
-# strategies (working-set / around / task / INT4 TF-IDF semantic / hybrid) are
-# untouched. Off by default → the default build is byte-identical.
+# Opt-in OctaSoma semantic memory.
 octasoma = ["dep:octasoma"]
-# **OctaCore cascade** (CCOS_EXTENDED, plan P2): the validated causal-narrow →
-# semantic-rerank cascade, with the CCOS-side `CcosScope` adapter implementing
-# `octacore::CausalScope` over a CCOS `ExternalMemory` (the circular-dep inversion
-# — CCOS depends on `octacore`, not the reverse). *Using* the cascade is gated at
-# runtime by the offline license (`Feature::OctaSomaMemory`) via
-# `CausalCascadeAccess::unlock` in `src/octacore_bridge.rs`. Implies `octasoma`
-# (the embedder the cascade reranks with). Off by default → byte-identical.
+# OctaCore cascade.
 octacore = ["dep:octacore", "octasoma"]
-# **CERVO/RSI vendor** (CCOS_EXTENDED, plan P3): the deterministic std-only RSI
-# core (RSI agent step + the CCOS-side `CcosAudit` adapter). `replay == live` —
-# no LLM, no subprocess. Off by default → the default build is byte-identical
-# (`cargo tree | grep ccos-rsi` empty). *Using* the RSI agent tier is gated at
-# runtime by the offline license (`Feature::RsiSelfImprovement`) via
-# `RsiAccess::unlock` in `src/rsi_bridge.rs`. See `docs/P3_HANDOFF.md`.
+# Deterministic RSI core only; Forge stays out of this replay-exact tier.
 rsi = ["dep:rsi"]
-# **RSI DGM** self-improvement loop (plan P3): the hard-sandboxed Darwin–Gödel
-# Machine — editable-file allowlist + `GuardLayer` + air-gapped
-# `cargo --offline --frozen` evaluator + hash-chain-audited `promote_to_live`.
-# This is a **REPLAY-RELAX**: the evaluator runs a real `cargo` subprocess, so a
-# DGM step is not bit-replayable (the proposer/evaluator stay deterministic; the
-# relax is the build/test subprocess). Runtime-gated by `Feature::RsiDgm` via
-# `DgmAccess::unlock`. `crates/ccos-rsi`'s `dgm` module is unconditional (no
-# `ccos-rsi/dgm` sub-feature), so this simply implies `rsi`.
-rsi-dgm = ["rsi"]
-# **RSI full** (plan P3): RSI + an LLM proposer backend (Ollama, local). This is a
-# **REPLAY-RELAX**: an LLM proposer is non-replayable by construction (the relax
-# is visible in the proposer type, never the default). Pulls `ccos-rsi/llm-ollama`.
-# Off by default. (A Claude backend can be added via `ccos-rsi/llm-claude-ureq`.)
+# Guarded DGM is the Research-Lab candidate-execution tier. It explicitly enables
+# the RSI -> vendored Forge adapter so Forge candidates can be wrapped in the
+# canonical CandidateEnvelope before ccos-sandbox evaluation. The extra engine
+# dependencies therefore remain outside the deterministic `rsi`/`pro-default`
+# tier and are exercised only on the documented replay-relax path.
+rsi-dgm = ["rsi", "rsi/forge"]
+# RSI full adds a local LLM proposer; DGM/Forge execution remains a separate opt-in.
 rsi-full = ["rsi", "rsi/llm-ollama"]
-# **Pro default** (CCOS_EXTENDED): every *deterministic* premium tier — the full
-# commercial bundle without any replay-relaxing full kernel. Replays bit-identically.
+# Every deterministic premium tier.
 pro-default = [
     "license", "license-pq", "signed-sync", "slhav2", "octasoma", "octacore",
     "rsi", "learned-embed",
 ]
-# **All full** (plan, test-only): every full-kernel / replay-relax feature at once.
-# NOT replay-safe — used only to exercise the full fused build in CI.
+# Every full-kernel / replay-relax feature at once.
 all-full = ["pro-default", "slhav2-full", "rsi-full", "rsi-dgm"]
 
 [dev-dependencies]
 proptest = "1"
 criterion = "0.5"
 
-# The CLI binary drives the async modules, so it requires the `llm` feature;
-# `cargo build` (no features) builds only the sync library.
 [[bin]]
 name = "ccos"
 path = "src/main.rs"
 required-features = ["llm"]
 
-# RAG → CCOS migration utility. Imports a CCOS Migration Bundle (produced from any
-# RAG store by `tools/rag2ccos`) into a causal workspace, losslessly. Uses only the
-# sync core (no async / no `llm`), so it builds in the default feature set — a
-# self-contained tool you can ship without the full CLI. See `docs/MIGRATION.md`.
 [[bin]]
 name = "ccos-migrate"
 path = "src/bin/ccos-migrate.rs"
@@ -253,43 +186,22 @@ path = "src/bin/ccos-migrate.rs"
 name = "delta_bench"
 harness = false
 
-# Vendor signing / keygen tool for offline licenses — requires the `license` feature
-# (it needs the ed25519 signing primitives). Never ships in the default build.
 [[example]]
 name = "license_sign"
 required-features = ["license"]
 
-# Vendor signing / keygen tool for **post-quantum** (SLH-DSA / FIPS 205) offline
-# licenses — requires the `license-pq` feature (it needs the SLH-DSA signing
-# primitives). A separate example: cargo `required-features` is AND-only, so a
-# single combined example would force both crypto features on whenever either
-# vendor tool builds. Never ships in the default build.
 [[example]]
 name = "license_sign_pq"
 required-features = ["license-pq"]
 
-# Quarantined-neural-embedder comparison — requires the `neural-embed` feature
-# (and, at runtime, a local embedding server; it degrades gracefully without one).
 [[example]]
 name = "neural_vs_lsa"
 required-features = ["neural-embed"]
 
-# Pro OctaSoma semantic-memory walkthrough — requires the `octasoma` feature.
-# Fully offline and deterministic (HashEmbedder); shows the community-tier
-# refusal, the Pro unlock, and region-scoped semantic anchors.
 [[example]]
 name = "octasoma_semantic"
 required-features = ["octasoma"]
 
-# ── Cargo workspace ─────────────────────────────────────────────────
-# CCOS_EXTENDED: the org's four repos fused around the CCOS hub. The root
-# `ccos` package stays the hub; the three other repos are vendored as workspace
-# members under `crates/`. `default-members = ["."]` keeps a bare
-# `cargo build` / `cargo test` limited to the root `ccos` package, so the
-# **default build remains byte-identical to upstream CCOS** — the fused kernels
-# (scirust SIMD, octasoma neural, RSI/DGM) enter only through opt-in features on
-# the member crates (and the root's own `slhav2-full`/`octacore`/`rsi*` features).
-# Build/test a fused member explicitly with `-p ccos-rsi`, `-p ccos-scirust`, etc.
 [workspace]
 resolver = "2"
 exclude = ["fuzz"]
@@ -303,19 +215,11 @@ members = [
     "crates/ccos-octasoma",
     "crates/ccos-octacore",
     "crates/ccos-sandbox",
-    # The vendor-side license claim counter (ccos-license-server +
-    # ccos-license-admin). A tool, not a runtime dependency: the default `ccos`
-    # build's dependency tree is untouched (the byte-identity guard still holds)
-    # and runtime license verification stays fully offline.
     "tools/ccos-license-server",
 ]
 default-members = ["."]
 
 [workspace.package]
-# MSRV 1.89 is required by `ccos-scirust` (stable stdarch_x86_avx512 + usize
-# helpers). The root `ccos` hub does not itself need 1.89 in the default build,
-# but the workspace pin is uniform so a fused-member build never silently targets
-# an older toolchain.
 rust-version = "1.89"
 license = "LicenseRef-TarekZekriti-Dual"
 repository = "https://github.com/Memorithm/CCOS_EXTENDED"
