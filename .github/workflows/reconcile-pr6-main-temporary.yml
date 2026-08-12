@@ -1,0 +1,86 @@
+name: temporary-reconcile-pr6-main
+
+on:
+  push:
+    branches: [feat/counterexample-shrinking-v1]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: temporary-reconcile-pr6-main
+  cancel-in-progress: true
+
+jobs:
+  reconcile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: feat/counterexample-shrinking-v1
+          fetch-depth: 0
+      - run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt --component clippy
+      - name: Merge current main and preserve counterexample layer
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          set +e
+          git merge --no-commit --no-ff origin/main
+          merge_rc=$?
+          set -e
+
+          # Workflow-file updates are performed separately via the GitHub API.
+          # Keep the branch copies here so this Actions token never pushes a
+          # workflow mutation; sandbox-safety also contains PR6's unique gate.
+          for f in .github/workflows/audit.yml .github/workflows/ci.yml .github/workflows/security.yml .github/workflows/sandbox-safety.yml; do
+            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              git checkout HEAD -- "$f"
+              git add "$f"
+            fi
+          done
+
+          if git ls-files -u -- Cargo.lock | grep -q .; then
+            git checkout --theirs -- Cargo.lock
+            git add Cargo.lock
+          fi
+          if git ls-files -u -- crates/ccos-rsi/Cargo.toml | grep -q .; then
+            git checkout --theirs -- crates/ccos-rsi/Cargo.toml
+            git add crates/ccos-rsi/Cargo.toml
+          fi
+          if git ls-files -u -- src/candidate_bridge.rs | grep -q .; then
+            git checkout --ours -- src/candidate_bridge.rs
+            git add src/candidate_bridge.rs
+          fi
+          if git ls-files -u -- crates/ccos-rsi/src/lib.rs | grep -q .; then
+            git checkout --ours -- crates/ccos-rsi/src/lib.rs
+            git add crates/ccos-rsi/src/lib.rs
+          fi
+
+          unresolved="$(git diff --name-only --diff-filter=U)"
+          if [ -n "$unresolved" ]; then
+            echo "Unexpected unresolved conflicts:" >&2
+            echo "$unresolved" >&2
+            exit 1
+          fi
+
+      - name: Validate counterexample layer on current main
+        run: |
+          set -euo pipefail
+          cargo +1.89.0 fmt --package rsi --check
+          cargo +1.89.0 fmt --package ccos-research-lab --check
+          cargo +1.89.0 check --workspace --locked
+          cargo +1.89.0 test -p rsi --locked counterexample -- --nocapture
+          cargo +1.89.0 test -p ccos-research-lab --features rsi --locked candidate_bridge -- --nocapture
+          cargo +1.89.0 clippy -p rsi --all-targets --locked -- -D warnings
+          git diff --check
+
+      - name: Commit reconciled main
+        run: |
+          set -euo pipefail
+          git add -A
+          git diff --cached --check
+          git commit -m "merge: reconcile counterexample layer with current main"
+          git push origin HEAD:feat/counterexample-shrinking-v1
