@@ -30,6 +30,10 @@ path = "src/lib.rs"
 default = []
 # Méta-optimiseur ℳ et substrat P_eff adossés au moteur Forge (exécution réelle).
 forge = ["dep:forge-core", "dep:rand", "dep:serde"]
+# Canonical SciRust ExecutionAttestation verification. The production protocol
+# mirror uses the already-declared optional serde dependency, so enabling this
+# feature does not add a new package to the workspace lockfile.
+execution-attestation = ["dep:serde"]
 # Mémoire contextuelle C adossée au moteur de mémoire fractale OctaSoma.
 octasoma = ["dep:octasoma"]
 # CCOS_EXTENDED (plan P3): the `ccos` cargo feature is GONE (circular-dep
