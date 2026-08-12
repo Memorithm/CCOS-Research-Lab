@@ -270,7 +270,7 @@ pub enum CounterexampleSearchResult {
         generated_cases: u64,
         oracle_queries: u64,
     },
-    Found(CounterexampleWitness),
+    Found(Box<CounterexampleWitness>),
 }
 
 pub struct CounterexampleEngine<G, S, O> {
@@ -363,7 +363,7 @@ where
                         minimized_input,
                     };
                     witness.validate(candidate)?;
-                    return Ok(CounterexampleSearchResult::Found(witness));
+                    return Ok(CounterexampleSearchResult::Found(Box::new(witness)));
                 }
             }
         }
@@ -483,7 +483,7 @@ impl CounterexampleShrinker for ChunkDeletionShrinker {
             if chunk == 1 {
                 break;
             }
-            chunk = (chunk + 1) / 2;
+            chunk = chunk.div_ceil(2);
         }
         Ok(out)
     }
