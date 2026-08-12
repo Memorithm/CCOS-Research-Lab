@@ -678,11 +678,10 @@ fn octa_feedback_tool(
     }
     match source {
         "retrieved_candidate" => st.octa.feedback.record(&query, &uri, score, relevant),
-        "external_ground_truth" => {
-            st.octa
-                .feedback
-                .record_ground_truth(&query, &uri, score, relevant)
-        }
+        "external_ground_truth" => st
+            .octa
+            .feedback
+            .record_ground_truth(&query, &uri, score, relevant),
         _ => unreachable!("source validated above"),
     }
     let payload = json!({
