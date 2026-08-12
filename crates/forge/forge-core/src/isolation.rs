@@ -4,7 +4,13 @@ use ccos_sandbox::{run, SandboxSpec};
 use std::process::Command;
 use std::time::Duration;
 
-fn execute(cmd: Command, timeout: Duration, max_output: u64) -> Result<String> {
+fn execute(
+    cmd: Command,
+    timeout: Duration,
+    max_output: u64,
+    max_memory_bytes: Option<u64>,
+    max_file_size_bytes: Option<u64>,
+) -> Result<String> {
     let cwd = cmd
         .get_current_dir()
         .map(std::path::Path::to_path_buf)
@@ -27,8 +33,8 @@ fn execute(cmd: Command, timeout: Duration, max_output: u64) -> Result<String> {
         timeout,
         termination_grace: Duration::from_millis(250),
         max_output_bytes: max_output,
-        max_memory_bytes: None,
-        max_file_size_bytes: None,
+        max_memory_bytes,
+        max_file_size_bytes,
         max_processes: None,
         cpu_time_limit: Some(timeout),
         network: ccos_sandbox::NetworkPolicy::Deny,
@@ -50,14 +56,20 @@ fn execute(cmd: Command, timeout: Duration, max_output: u64) -> Result<String> {
 }
 
 pub fn run_with_timeout(cmd: Command, timeout: Duration) -> Result<String> {
-    execute(cmd, timeout, 4 * 1024 * 1024)
+    execute(cmd, timeout, 4 * 1024 * 1024, None, None)
 }
 
 pub fn run_with_secure_limits(
     cmd: Command,
     timeout: Duration,
-    _max_memory_bytes: u64,
-    _max_file_size_bytes: u64,
+    max_memory_bytes: u64,
+    max_file_size_bytes: u64,
 ) -> Result<String> {
-    execute(cmd, timeout, 4 * 1024 * 1024)
+    execute(
+        cmd,
+        timeout,
+        4 * 1024 * 1024,
+        Some(max_memory_bytes),
+        Some(max_file_size_bytes),
+    )
 }
