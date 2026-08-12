@@ -32,7 +32,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt
-      - run: cargo +1.89.0 fmt --package ccos-research-lab --check
+      - name: Format touched candidate-execution boundary
+        run: |
+          cargo +1.89.0 fmt --package ccos-research-lab --check
+          cargo +1.89.0 fmt --package rsi --check
+          cargo +1.89.0 fmt --package ccos-sandbox --check
+          cargo +1.89.0 fmt --manifest-path crates/forge/forge-core/Cargo.toml -- --check
 
   clippy-default:
     needs: format
@@ -110,7 +115,7 @@ jobs:
       - run: >-
           cargo +1.89.0 test --locked
           -p scirust -p slha-mcp -p slha-c -p ccos-memory-runtime
-          -p octasoma -p octacore -p rsi
+          -p octasoma -p octacore -p rsi -p ccos-sandbox
 
   feature-combinations:
     needs: clippy-default
