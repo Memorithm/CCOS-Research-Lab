@@ -209,6 +209,7 @@ pub mod retrodict;
 #[cfg(feature = "rsi")]
 pub mod rsi_bridge;
 pub mod sanitizer;
+pub mod scientific_intake;
 pub mod setup;
 pub mod spectral;
 pub mod trace;
@@ -245,3 +246,6 @@ pub use external_memory::{
 };
 pub use memory::{EdgeType, GraphEdge, GraphNode, MemoryGraph, NodeId, NodeType, ScoringWeights};
 pub use persist::KernelSnapshot;
+pub use scientific_intake::{
+    import_scientific_bundle, ScientificIntakeError, ScientificIntakeReceipt,
+};
