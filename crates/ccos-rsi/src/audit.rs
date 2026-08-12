@@ -106,6 +106,32 @@ impl HashChainLog {
         &self.events
     }
 
+    /// Append a canonical custom event to the same SHA-256 hash chain used by
+    /// RSI step audit.  This is intentionally an inherent method rather than a
+    /// widening of [`AuditLog`]: existing third-party audit sinks keep their
+    /// API, while deterministic control planes (for example the CERVO-derived
+    /// orchestrator) can seal their own event types before a CCOS-side adapter
+    /// mirrors them into the real `EventLog`.
+    pub fn record_custom(
+        &mut self,
+        event_type: impl Into<String>,
+        payload: impl Into<String>,
+    ) -> String {
+        let seq = self.events.len() as u64;
+        let prev_hash = self.chain_head();
+        let event_type = event_type.into();
+        let payload = payload.into();
+        let hash = link_hash(&prev_hash, seq, &event_type, &payload);
+        self.events.push(TraceEvent {
+            sequence_number: seq,
+            prev_hash,
+            hash: hash.clone(),
+            event_type,
+            payload,
+        });
+        hash
+    }
+
     /// Rejoue les événements de `from` (inclus) à `to` (exclu, None = fin).
     pub fn replay(&self, from: u64, to: Option<u64>) -> Vec<&TraceEvent> {
         let end = to.unwrap_or(self.events.len() as u64);
@@ -139,19 +165,7 @@ impl HashChainLog {
 
 impl AuditLog for HashChainLog {
     fn record(&mut self, event: &AuditEvent) -> String {
-        let seq = self.events.len() as u64;
-        let prev_hash = self.chain_head();
-        let event_type = "rsi_step".to_string();
-        let payload = event.payload();
-        let hash = link_hash(&prev_hash, seq, &event_type, &payload);
-        self.events.push(TraceEvent {
-            sequence_number: seq,
-            prev_hash,
-            hash: hash.clone(),
-            event_type,
-            payload,
-        });
-        hash
+        self.record_custom("rsi_step", event.payload())
     }
 
     fn len(&self) -> usize {
@@ -208,6 +222,18 @@ mod tests {
         for i in 1..10 {
             assert_eq!(log.events()[i].prev_hash, log.events()[i - 1].hash);
         }
+    }
+
+    #[test]
+    fn custom_events_share_the_same_chain_contract() {
+        let mut log = HashChainLog::new();
+        log.record(&ev(0, 0.2));
+        log.record_custom("rsi_swarm", "seq=1;kind=health;unit=7");
+        log.record_custom("rsi_swarm", "seq=2;kind=offer;unit=7;strategy=42");
+        assert_eq!(log.len(), 3);
+        assert!(log.verify());
+        assert_eq!(log.events()[1].event_type, "rsi_swarm");
+        assert_eq!(log.events()[1].prev_hash, log.events()[0].hash);
     }
 
     #[test]
