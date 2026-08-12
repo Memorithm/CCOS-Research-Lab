@@ -1,0 +1,58 @@
+name: temporary-counterexample-corpus-integrate
+
+on:
+  push:
+    branches:
+      - feat/counterexample-shrinking-v1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: temporary-counterexample-corpus-integrate
+  cancel-in-progress: true
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: feat/counterexample-shrinking-v1
+          fetch-depth: 1
+      - run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt --component clippy
+      - name: Wire corpus module and exports
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('crates/ccos-rsi/src/lib.rs')
+          s = p.read_text()
+          old = 'pub mod counterexample;\npub mod counterexample_oracle;'
+          new = 'pub mod counterexample;\npub mod counterexample_corpus;\npub mod counterexample_oracle;'
+          if old not in s and new not in s:
+              raise SystemExit('counterexample module anchor not found')
+          s = s.replace(old, new, 1)
+          export_anchor = '''pub use counterexample::{\n    validate_counterexample_receipt, ChunkDeletionShrinker, CounterexampleConfig,\n    CounterexampleEngine, CounterexampleGenerator, CounterexampleOracle, CounterexampleReceipt,\n    CounterexampleSearchResult, CounterexampleShrinker, CounterexampleWitness, OracleVerdict,\n    COUNTEREXAMPLE_PROTOCOL_VERSION,\n};\n'''
+          corpus_export = '''pub use counterexample_corpus::{\n    CounterexampleCorpusEntry, CounterexampleRegressionCorpus, RegressionOutcome, RegressionReplay,\n    StoredCounterexample, COUNTEREXAMPLE_CORPUS_SCHEMA_VERSION,\n};\n'''
+          if corpus_export not in s:
+              if export_anchor not in s:
+                  raise SystemExit('counterexample export anchor not found')
+              s = s.replace(export_anchor, export_anchor + corpus_export, 1)
+          p.write_text(s)
+          PY
+      - name: Format and validate RSI corpus integration
+        run: |
+          cargo +1.89.0 fmt --package rsi
+          cargo +1.89.0 fmt --package rsi -- --check
+          cargo +1.89.0 test -p rsi --locked counterexample_corpus -- --nocapture
+          cargo +1.89.0 test -p rsi --locked
+          cargo +1.89.0 clippy -p rsi --all-targets --locked -- -D warnings
+      - name: Self-remove workflow and commit validated integration
+        run: |
+          rm .github/workflows/counterexample-corpus-integrate-temporary.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/ccos-rsi/src/lib.rs crates/ccos-rsi/src/counterexample_corpus.rs .github/workflows/counterexample-corpus-integrate-temporary.yml
+          git commit --no-verify -m "feat(rsi): integrate counterexample regression corpus"
+          git push origin HEAD:feat/counterexample-shrinking-v1
