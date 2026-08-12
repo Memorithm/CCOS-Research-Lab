@@ -64,7 +64,12 @@ jobs:
           CARGO_NET_OFFLINE: "true"
         run: cargo test --release -p rsi --locked repeated_seed -- --nocapture
 
-      - name: CCOS primary-log candidate + evidence + adoption chain
+      - name: deterministic counterexample search + shrinking gate
+        env:
+          CARGO_NET_OFFLINE: "true"
+        run: cargo test --release -p rsi --locked counterexample -- --nocapture
+
+      - name: CCOS primary-log candidate + evidence + counterexample + adoption chain
         env:
           CARGO_NET_OFFLINE: "true"
         run: >-
