@@ -300,9 +300,11 @@ fn finish_with_anchor<M: ExternalMemory + ?Sized>(
 // ──────── Explicit relevance feedback + conformal anchor gating (CCOS-side, not vendored) ────────
 
 /// The **explicit relevance-feedback channel** for the semantic tier — CCOS's half of the
-/// design decision recorded in octasoma's `feedback` module: calibration labels come from
-/// the agent loop (*which anchors actually helped*), never from self-retrieval, which is
-/// the documented way to overstate every statistical guarantee.
+/// provenance contract in octasoma's `feedback` module. Candidate-conditioned labels
+/// ("was the anchor I just returned useful?") are retained for temperature/ranking
+/// calibration, but they can never create a recall-coverage certificate. Conformal
+/// coverage uses only independently selected ground-truth targets supplied through
+/// [`SemanticFeedback::record_ground_truth`].
 ///
 /// The log is in-memory and per session/process, deliberately **not** persisted with the
 /// store: feedback describes a *workload*, not the corpus, and stale labels silently void
@@ -320,12 +322,22 @@ impl SemanticFeedback {
         Self::default()
     }
 
-    /// Records one verdict from the agent loop: after resolving `query`, the anchor
-    /// `uri` (returned with similarity `score` in `(0, 1]`) was — or was not — actually
-    /// useful. Rejected anchors may be labelled too: a `relevant = true` on one is
-    /// exactly how an over-tight floor recovers.
+    /// Records one **candidate-conditioned** verdict from the agent loop: after resolving
+    /// `query`, the returned anchor `uri` (with similarity `score` in `(0, 1]`) was — or
+    /// was not — useful. This evidence is valid for probability/ranking calibration but is
+    /// deliberately excluded from [`Self::certified_score_floor`], because a relevant
+    /// memory the retriever never returned cannot be labelled through this channel.
     pub fn record(&mut self, query: &str, uri: &str, score: f64, relevant: bool) {
         self.log.record(query, uri, score as f32, relevant);
+    }
+
+    /// Records an independently selected ground-truth target. The caller is responsible
+    /// for ensuring target selection did not depend on the retriever candidate set (for
+    /// example a held-out evaluator or authorised benchmark). Only this provenance class
+    /// contributes nonconformity scores to the conformal coverage certificate.
+    pub fn record_ground_truth(&mut self, query: &str, uri: &str, score: f64, relevant: bool) {
+        self.log
+            .record_ground_truth(query, uri, score as f32, relevant);
     }
 
     /// All observations, in arrival order.
@@ -350,10 +362,11 @@ impl SemanticFeedback {
 
     /// The **certified anchor-score floor** at miscoverage `alpha`: trusting only anchors
     /// scoring at or above the floor keeps the relevant anchor with probability
-    /// `≥ 1 − alpha`, for workloads exchangeable with the recorded labels
-    /// (split-conformal quantile over the confirmed-relevant nonconformities,
-    /// finite-sample corrected — octasoma's `conformal_quantile`). `None` while the log
-    /// is too small for the asked `alpha` — never a fabricated threshold.
+    /// `≥ 1 − alpha`, for workloads exchangeable with the independently sourced
+    /// ground-truth labels (split-conformal quantile over their confirmed-relevant
+    /// nonconformities, finite-sample corrected — octasoma's `conformal_quantile`).
+    /// Candidate-conditioned labels are excluded by construction. `None` while the
+    /// independent log is too small for the asked `alpha` — never a fabricated threshold.
     pub fn certified_score_floor(&self, alpha: f64) -> Option<f64> {
         let nc: Vec<f64> = self
             .log
@@ -384,8 +397,8 @@ impl SemanticFeedback {
 ///   statement holds (see [`SemanticFeedback::certified_score_floor`]).
 /// - `"octa-semantic-below-floor-fallback-task"` — an anchor existed but scored below the
 ///   certified floor; trusting it would be unwarranted, so the lexical fallback is taken.
-/// - `"octa-semantic"` — the feedback log cannot support `alpha` yet: baseline
-///   [`recall_semantic`] behavior, calibration inactive (record more labels).
+/// - `"octa-semantic"` — the independent ground-truth log cannot support `alpha` yet:
+///   baseline [`recall_semantic`] behavior, calibration inactive.
 /// - `"octa-semantic-fallback-task"` — no anchor at all (empty index / embed failure),
 ///   exactly as in [`recall_semantic`].
 pub fn recall_semantic_calibrated<E: Embedder, M: ExternalMemory + ?Sized>(
@@ -607,23 +620,28 @@ mod tests {
     #[test]
     fn feedback_certifies_a_score_floor_and_never_fakes_one() {
         let mut fb = SemanticFeedback::new();
-        // Too few labels for alpha → no floor, never a fabricated threshold.
+        // Candidate-conditioned labels can calibrate ranking/probability, but never
+        // create a recall-coverage certificate by themselves.
+        fb.record("candidate", "sym:a.rs:candidate", 0.99, true);
         assert_eq!(fb.certified_score_floor(0.5), None);
 
-        // Four confirmed-relevant anchors at scores 0.9/0.8/0.7/0.6 → nonconformities
-        // 0.1/0.2/0.3/0.4; alpha = 0.5 → k = ⌈5·0.5⌉ = 3 → q̂ = 0.3 → floor = 0.7.
+        let mut fb = SemanticFeedback::new();
+        // Four independently selected, confirmed-relevant targets at scores
+        // 0.9/0.8/0.7/0.6 → nonconformities 0.1/0.2/0.3/0.4; alpha = 0.5 →
+        // k = ⌈5·0.5⌉ = 3 → q̂ = 0.3 → floor = 0.7.
         for (i, s) in [0.9, 0.8, 0.7, 0.6].into_iter().enumerate() {
-            fb.record(&format!("q{i}"), &format!("sym:a.rs:f{i}"), s, true);
+            fb.record_ground_truth(&format!("q{i}"), &format!("sym:a.rs:f{i}"), s, true);
         }
-        // Irrelevant labels never calibrate the radius.
+        // Candidate-conditioned irrelevant labels are retained but never calibrate the
+        // conformal radius.
         fb.record("qx", "sym:a.rs:noise", 0.99, false);
         assert_eq!(fb.len(), 5);
         assert_eq!(fb.relevant_count(), 4);
         let floor = fb
             .certified_score_floor(0.5)
-            .expect("n=4 supports alpha=0.5");
+            .expect("n=4 independent ground-truth labels support alpha=0.5");
         assert!((floor - 0.7).abs() < 1e-6, "floor = {floor}");
-        // A stricter alpha this small log cannot support → None again.
+        // A stricter alpha this small independent log cannot support → None again.
         assert_eq!(fb.certified_score_floor(0.05), None);
     }
 
@@ -652,15 +670,15 @@ mod tests {
         let w = recall_semantic_calibrated(&mem, &idx, &fb, &exact, 512, 0.25);
         assert_eq!(w.strategy, "octa-semantic");
 
-        // Three exact-hit labels (score 1.0) → nonconformities all 0 → floor = 1.0 at
-        // alpha = 0.25 (k = ⌈4·0.75⌉ = 3 ≤ n).
+        // Three independently selected exact-hit targets (score 1.0) → nonconformities
+        // all 0 → floor = 1.0 at alpha = 0.25 (k = ⌈4·0.75⌉ = 3 ≤ n).
         let mut fb = SemanticFeedback::new();
         for q in ["a", "b", "c"] {
-            fb.record(q, "sym:src/db.rs:query", 1.0, true);
+            fb.record_ground_truth(q, "sym:src/db.rs:query", 1.0, true);
         }
         let floor = fb
             .certified_score_floor(0.25)
-            .expect("n=3 supports alpha=0.25");
+            .expect("n=3 independent ground-truth labels support alpha=0.25");
         assert!((floor - 1.0).abs() < 1e-9);
 
         // An exact-content query anchors at distance 0 → score 1.0 ≥ floor → certified.
