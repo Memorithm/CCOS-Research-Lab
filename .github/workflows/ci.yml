@@ -94,6 +94,8 @@ jobs:
           - name: pro-default
             features: pro-default
     env:
+      # Premium feature sets include native crypto builds; cap parallelism to
+      # avoid exhausting each hosted runner and losing runner communication.
       CARGO_BUILD_JOBS: "2"
       RUST_TEST_THREADS: "2"
     steps:
