@@ -72,11 +72,7 @@ pub enum OracleVerdict {
 pub trait CounterexampleGenerator {
     fn generator_id(&self) -> &str;
 
-    fn generate(
-        &self,
-        seed: u64,
-        ordinal: u64,
-    ) -> Result<Vec<u8>, CandidateProtocolError>;
+    fn generate(&self, seed: u64, ordinal: u64) -> Result<Vec<u8>, CandidateProtocolError>;
 }
 
 pub trait CounterexampleShrinker {
@@ -253,16 +249,8 @@ pub struct CounterexampleWitness {
 }
 
 impl CounterexampleWitness {
-    pub fn validate(
-        &self,
-        candidate: &CandidateEnvelope,
-    ) -> Result<(), CandidateProtocolError> {
+    pub fn validate(&self, candidate: &CandidateEnvelope) -> Result<(), CandidateProtocolError> {
         validate_counterexample_receipt(candidate, &self.receipt)?;
-        if self.original_input.is_empty() || self.minimized_input.is_empty() {
-            return Err(CandidateProtocolError::PolicyViolation(
-                "counterexample witness inputs must be non-empty".into(),
-            ));
-        }
         if self.receipt.original_input_bytes != self.original_input.len() as u64
             || self.receipt.minimized_input_bytes != self.minimized_input.len() as u64
             || self.receipt.original_input_sha256 != digest_hex(&self.original_input)
@@ -312,6 +300,11 @@ where
                 "counterexample.oracle_contract_sha256",
             ));
         }
+        CounterexampleConfig::new(
+            config.generation_budget,
+            config.shrink_query_budget,
+            config.max_case_bytes,
+        )?;
         Ok(Self {
             generator,
             shrinker,
@@ -382,11 +375,6 @@ where
     }
 
     fn validate_generated_case(&self, input: &[u8]) -> Result<(), CandidateProtocolError> {
-        if input.is_empty() {
-            return Err(CandidateProtocolError::PolicyViolation(
-                "counterexample generator produced an empty case".into(),
-            ));
-        }
         if input.len() > self.config.max_case_bytes {
             return Err(CandidateProtocolError::PolicyViolation(format!(
                 "counterexample generator exceeded max_case_bytes: {} > {}",
@@ -411,8 +399,7 @@ where
             let mut normalized = candidates
                 .into_iter()
                 .filter(|candidate| {
-                    !candidate.is_empty()
-                        && candidate.len() <= self.config.max_case_bytes
+                    candidate.len() <= self.config.max_case_bytes
                         && case_order(candidate, &current) == Ordering::Less
                 })
                 .collect::<Vec<_>>();
@@ -453,9 +440,7 @@ where
 }
 
 fn case_order(left: &[u8], right: &[u8]) -> Ordering {
-    left.len()
-        .cmp(&right.len())
-        .then_with(|| left.cmp(right))
+    left.len().cmp(&right.len()).then_with(|| left.cmp(right))
 }
 
 fn infrastructure_error(reason: String) -> CandidateProtocolError {
@@ -532,11 +517,7 @@ mod tests {
             "sequence-v1"
         }
 
-        fn generate(
-            &self,
-            _seed: u64,
-            ordinal: u64,
-        ) -> Result<Vec<u8>, CandidateProtocolError> {
+        fn generate(&self, _seed: u64, ordinal: u64) -> Result<Vec<u8>, CandidateProtocolError> {
             Ok(self.cases[ordinal as usize % self.cases.len()].clone())
         }
     }
