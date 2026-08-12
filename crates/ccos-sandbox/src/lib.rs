@@ -21,12 +21,12 @@ pub enum NetworkPolicy {
     LoopbackOnly,
 }
 
-/// Explicit trusted read-only input mounted into the sandbox.
+/// Trusted immutable host input exposed by the *runner policy*, never by the
+/// candidate harness itself.
 ///
-/// `target` is intentionally restricted to a single top-level sandbox path
-/// (for example `/rust-toolchain` or `/cargo-vendor`). This prevents a caller
-/// from shadowing `/workspace`, `/usr`, `/proc`, `/dev` or another security
-/// boundary while still allowing hermetic toolchains and dependency snapshots.
+/// `target` is restricted to one top-level sandbox path such as
+/// `/rust-toolchain` or `/cargo-vendor`, preventing a mount from shadowing
+/// `/workspace` or one of the base system/security mounts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadOnlyMount {
     pub source: PathBuf,
@@ -49,8 +49,6 @@ pub struct SandboxSpec {
     pub cwd: PathBuf,
     /// Exactly one writable host workspace is exposed as `/workspace`.
     pub writable_paths: Vec<PathBuf>,
-    /// Trusted immutable inputs exposed at explicit top-level sandbox paths.
-    pub read_only_mounts: Vec<ReadOnlyMount>,
     pub environment: BTreeMap<OsString, OsString>,
     pub timeout: Duration,
     pub termination_grace: Duration,
@@ -96,10 +94,27 @@ pub trait SandboxRunner {
     fn run(&self, spec: &SandboxSpec) -> Result<SandboxOutput, SandboxError>;
 }
 
-#[derive(Default)]
-pub struct LinuxBubblewrap;
+#[derive(Clone, Debug, Default)]
+pub struct LinuxBubblewrap {
+    read_only_mounts: Vec<ReadOnlyMount>,
+}
 
 impl LinuxBubblewrap {
+    /// Construct an infrastructure runner with explicit immutable host inputs.
+    /// Candidate code and candidate harnesses cannot alter this list.
+    pub fn with_read_only_mounts(
+        read_only_mounts: Vec<ReadOnlyMount>,
+    ) -> Result<Self, SandboxError> {
+        for mount in &read_only_mounts {
+            Self::validate_mount(mount)?;
+        }
+        Ok(Self { read_only_mounts })
+    }
+
+    pub fn read_only_mounts(&self) -> &[ReadOnlyMount] {
+        &self.read_only_mounts
+    }
+
     fn executable() -> Result<PathBuf, SandboxError> {
         ["/usr/bin/bwrap", "/bin/bwrap"]
             .iter()
@@ -166,13 +181,10 @@ impl LinuxBubblewrap {
             ));
         }
         let mut components = mount.target.components();
-        let _root = components.next();
-        let Some(std::path::Component::Normal(_)) = components.next() else {
-            return Err(SandboxError::PolicyViolation(
-                "read-only mount target must be one top-level sandbox path".into(),
-            ));
-        };
-        if components.next().is_some() {
+        if components.next() != Some(std::path::Component::RootDir)
+            || !matches!(components.next(), Some(std::path::Component::Normal(_)))
+            || components.next().is_some()
+        {
             return Err(SandboxError::PolicyViolation(
                 "read-only mount target must be one top-level sandbox path".into(),
             ));
@@ -221,7 +233,7 @@ impl SandboxRunner for LinuxBubblewrap {
                 "sandbox cwd must equal the single writable workspace".into(),
             ));
         }
-        for mount in &spec.read_only_mounts {
+        for mount in &self.read_only_mounts {
             Self::validate_mount(mount)?;
         }
 
@@ -267,7 +279,7 @@ impl SandboxRunner for LinuxBubblewrap {
         cmd.args(["--bind"])
             .arg(workspace)
             .args(["/workspace"]);
-        for mount in &spec.read_only_mounts {
+        for mount in &self.read_only_mounts {
             cmd.arg("--ro-bind").arg(&mount.source).arg(&mount.target);
         }
         cmd.args([
@@ -377,7 +389,7 @@ impl SandboxRunner for LinuxBubblewrap {
 }
 
 pub fn run(spec: &SandboxSpec) -> Result<SandboxOutput, SandboxError> {
-    LinuxBubblewrap.run(spec)
+    LinuxBubblewrap::default().run(spec)
 }
 
 #[cfg(test)]
@@ -390,7 +402,6 @@ mod tests {
             args: vec!["ok".into()],
             cwd: cwd.clone(),
             writable_paths: vec![cwd],
-            read_only_mounts: Vec::new(),
             environment: BTreeMap::new(),
             timeout: Duration::from_secs(2),
             termination_grace: Duration::from_millis(50),
@@ -418,12 +429,12 @@ mod tests {
         let mut spec = base_spec(std::env::temp_dir());
         spec.writable_paths.clear();
         assert!(matches!(
-            LinuxBubblewrap.run(&spec),
+            LinuxBubblewrap::default().run(&spec),
             Err(SandboxError::PolicyViolation(_))
         ));
         spec.writable_paths = vec![std::env::temp_dir(), std::env::temp_dir()];
         assert!(matches!(
-            LinuxBubblewrap.run(&spec),
+            LinuxBubblewrap::default().run(&spec),
             Err(SandboxError::PolicyViolation(_))
         ));
     }
@@ -432,15 +443,16 @@ mod tests {
     fn reserved_readonly_mount_target_is_rejected() {
         let mount = ReadOnlyMount::new(std::env::temp_dir(), "/workspace");
         assert!(matches!(
-            LinuxBubblewrap::validate_mount(&mount),
+            LinuxBubblewrap::with_read_only_mounts(vec![mount]),
             Err(SandboxError::PolicyViolation(_))
         ));
     }
 
     #[test]
-    fn top_level_readonly_mount_is_accepted() {
+    fn top_level_readonly_mount_is_runner_owned() {
         let mount = ReadOnlyMount::new(std::env::temp_dir(), "/rust-toolchain");
-        LinuxBubblewrap::validate_mount(&mount).unwrap();
+        let runner = LinuxBubblewrap::with_read_only_mounts(vec![mount.clone()]).unwrap();
+        assert_eq!(runner.read_only_mounts(), &[mount]);
     }
 
     #[test]
