@@ -13,6 +13,7 @@ jobs:
         with:
           ref: feat/papers-scientific-intake-v1
           fetch-depth: 0
+      - run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt
       - name: Patch test
         run: |
           python3 - <<'PY'
