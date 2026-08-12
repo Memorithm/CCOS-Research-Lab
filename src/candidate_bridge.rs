@@ -9,8 +9,10 @@ use std::collections::BTreeSet;
 
 use crate::event_log::{EventLog, EventPayload, EventType};
 use rsi::{
-    validate_adoption, validate_candidate, validate_evaluation, AdoptionReceipt, CandidateEnvelope,
-    CandidateProtocolError, ChampionChallengerPolicy, EvaluationReceipt, SealedCandidateEvaluator,
+    validate_adoption, validate_candidate, validate_evaluation, AdoptionDecision, AdoptionReceipt,
+    CandidateEnvelope, CandidateProtocolError, ChampionChallengerPolicy, EvaluationPair,
+    EvaluationReceipt, PromotionEvidenceBundle, RepeatedSeedDecision, RepeatedSeedPromotionPolicy,
+    SealedCandidateEvaluator,
 };
 
 #[derive(Debug)]
@@ -18,6 +20,7 @@ pub struct CcosCandidateAudit {
     log: EventLog,
     candidates: BTreeSet<String>,
     evaluations: BTreeSet<String>,
+    promotion_evidence: BTreeSet<String>,
     adoptions: BTreeSet<String>,
 }
 
@@ -27,6 +30,7 @@ impl CcosCandidateAudit {
             log: EventLog::new(session_id.into()),
             candidates: BTreeSet::new(),
             evaluations: BTreeSet::new(),
+            promotion_evidence: BTreeSet::new(),
             adoptions: BTreeSet::new(),
         }
     }
@@ -50,9 +54,9 @@ impl CcosCandidateAudit {
         Ok(receipt)
     }
 
-    /// Compare a recorded challenger with a champion under the typed promotion
-    /// policy, then seal the resulting Promote/Reject decision in the same CCOS
-    /// chain. A challenger evaluation not previously audited is refused.
+    /// Fast single-seed selection gate. Passing produces `Quarantine`, never
+    /// direct promotion. The resulting decision is still journaled so the
+    /// transition into repeated-seed holdout is auditable.
     pub fn decide_champion_challenger(
         &mut self,
         champion: &EvaluationReceipt,
@@ -62,12 +66,37 @@ impl CcosCandidateAudit {
     ) -> Result<AdoptionReceipt, CandidateProtocolError> {
         if !self.evaluations.contains(&challenger.fingerprint()) {
             return Err(CandidateProtocolError::PolicyViolation(
-                "challenger evaluation must be audited before adoption".into(),
+                "challenger evaluation must be audited before selection decision".into(),
             ));
         }
         let adoption = policy.decide(champion, challenger, promoted_artifact_sha256)?;
         self.record_adoption(challenger, &adoption)?;
         Ok(adoption)
+    }
+
+    /// Hard promotion path. All selection and holdout evaluations must already
+    /// exist in the primary CCOS chain. Evidence is written before adoption.
+    pub fn decide_repeated_seed(
+        &mut self,
+        selection: &[EvaluationPair<'_>],
+        holdout: &[EvaluationPair<'_>],
+        policy: &RepeatedSeedPromotionPolicy,
+        promoted_artifact_sha256: Option<String>,
+    ) -> Result<RepeatedSeedDecision, CandidateProtocolError> {
+        let decision = policy.decide(selection, holdout, promoted_artifact_sha256)?;
+        self.record_promotion_evidence(decision.evidence())?;
+        let anchor = selection
+            .iter()
+            .chain(holdout.iter())
+            .map(|pair| pair.challenger)
+            .find(|receipt| receipt.fingerprint() == decision.adoption().evaluation_fingerprint)
+            .ok_or_else(|| {
+                CandidateProtocolError::PolicyViolation(
+                    "repeated-seed adoption anchor is absent from supplied evidence".into(),
+                )
+            })?;
+        self.record_adoption(anchor, decision.adoption())?;
+        Ok(decision)
     }
 
     pub fn record_candidate(
@@ -114,6 +143,38 @@ impl CcosCandidateAudit {
         Ok(self.log.chain_head())
     }
 
+    pub fn record_promotion_evidence(
+        &mut self,
+        evidence: &PromotionEvidenceBundle,
+    ) -> Result<String, CandidateProtocolError> {
+        for row in evidence.selection().iter().chain(evidence.holdout()) {
+            if !self
+                .evaluations
+                .contains(row.champion_evaluation_fingerprint())
+                || !self
+                    .evaluations
+                    .contains(row.challenger_evaluation_fingerprint())
+            {
+                return Err(CandidateProtocolError::PolicyViolation(
+                    "every promotion-evidence evaluation must be audited before the evidence bundle"
+                        .into(),
+                ));
+            }
+        }
+        let fingerprint = evidence.fingerprint();
+        if !self.promotion_evidence.insert(fingerprint) {
+            return Ok(self.log.chain_head());
+        }
+        self.log.append(
+            EventType::AgentAction,
+            EventPayload::Custom {
+                key: "candidate_promotion_evidence_v1".to_string(),
+                value: evidence.audit_payload(),
+            },
+        );
+        Ok(self.log.chain_head())
+    }
+
     pub fn record_adoption(
         &mut self,
         evaluation: &EvaluationReceipt,
@@ -123,6 +184,16 @@ impl CcosCandidateAudit {
         if !self.evaluations.contains(&evaluation.fingerprint()) {
             return Err(CandidateProtocolError::PolicyViolation(
                 "evaluation must be recorded before its adoption decision".into(),
+            ));
+        }
+        if receipt.decision == AdoptionDecision::Promote
+            && !self
+                .promotion_evidence
+                .iter()
+                .any(|evidence| receipt.reason.contains(evidence))
+        {
+            return Err(CandidateProtocolError::PolicyViolation(
+                "promotion must bind a previously audited repeated-seed evidence bundle".into(),
             ));
         }
         let fingerprint = receipt.fingerprint();
@@ -144,11 +215,11 @@ impl CcosCandidateAudit {
 mod tests {
     use super::*;
     use rsi::{
-        AdoptionDecision, AdoptionReceipt, CandidateOrigin, EvaluationReceipt, EvaluationStatus,
-        ObjectiveValue, CANDIDATE_PROTOCOL_VERSION,
+        AdoptionReceipt, CandidateOrigin, EvaluationStatus, ObjectiveValue,
+        CANDIDATE_PROTOCOL_VERSION,
     };
 
-    fn candidate_with_source(source: &[u8]) -> CandidateEnvelope {
+    fn candidate_with_source_and_seed(source: &[u8], seed: u64) -> CandidateEnvelope {
         CandidateEnvelope::from_source(
             CandidateOrigin::Forge,
             "simd_gemm",
@@ -156,9 +227,13 @@ mod tests {
             Some("7".into()),
             None,
             Some("a".repeat(64)),
-            42,
+            seed,
         )
         .unwrap()
+    }
+
+    fn candidate_with_source(source: &[u8]) -> CandidateEnvelope {
+        candidate_with_source_and_seed(source, 42)
     }
 
     fn candidate() -> CandidateEnvelope {
@@ -195,10 +270,10 @@ mod tests {
         let adoption = AdoptionReceipt::new(
             &evaluation,
             "champion-challenger-v1",
-            AdoptionDecision::Promote,
-            "holdout and regression gates passed",
+            AdoptionDecision::Quarantine,
+            "single-seed gate passed; holdout required",
             Some("previous".into()),
-            Some("f".repeat(64)),
+            None,
         )
         .unwrap();
 
@@ -271,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn closed_pipeline_evaluates_then_promotes_audited_challenger() {
+    fn closed_pipeline_quarantines_single_seed_gain_for_holdout() {
         let champion_candidate = candidate_with_source(b"champion");
         let challenger_candidate = candidate_with_source(b"challenger");
         let champion = evaluation_with_latency(&champion_candidate, 100.0);
@@ -287,8 +362,114 @@ mod tests {
             .decide_champion_challenger(&champion, &measured, &policy, Some("f".repeat(64)))
             .unwrap();
 
-        assert_eq!(adoption.decision, AdoptionDecision::Promote);
+        assert_eq!(adoption.decision, AdoptionDecision::Quarantine);
+        assert_eq!(adoption.promoted_artifact_sha256, None);
         assert_eq!(audit.event_log().events.len(), 3);
         assert!(audit.event_log().verify_integrity().valid);
+    }
+
+    fn pair(
+        seed: u64,
+        challenger_latency: f64,
+    ) -> (
+        CandidateEnvelope,
+        EvaluationReceipt,
+        CandidateEnvelope,
+        EvaluationReceipt,
+    ) {
+        let champion_candidate = candidate_with_source_and_seed(b"champion", seed);
+        let challenger_candidate = candidate_with_source_and_seed(b"challenger", seed);
+        let champion = evaluation_with_latency(&champion_candidate, 100.0);
+        let challenger = evaluation_with_latency(&challenger_candidate, challenger_latency);
+        (champion_candidate, champion, challenger_candidate, challenger)
+    }
+
+    fn record_pair(
+        audit: &mut CcosCandidateAudit,
+        pair: &(
+            CandidateEnvelope,
+            EvaluationReceipt,
+            CandidateEnvelope,
+            EvaluationReceipt,
+        ),
+    ) {
+        audit.record_candidate(&pair.0).unwrap();
+        audit.record_evaluation(&pair.0, &pair.1).unwrap();
+        audit.record_candidate(&pair.2).unwrap();
+        audit.record_evaluation(&pair.2, &pair.3).unwrap();
+    }
+
+    #[test]
+    fn repeated_seed_promotion_requires_audited_disjoint_evidence() {
+        let s1 = pair(101, 80.0);
+        let s2 = pair(102, 82.0);
+        let h1 = pair(201, 84.0);
+        let h2 = pair(202, 83.0);
+        let selection = [
+            EvaluationPair {
+                champion_candidate: &s1.0,
+                champion: &s1.1,
+                challenger_candidate: &s1.2,
+                challenger: &s1.3,
+            },
+            EvaluationPair {
+                champion_candidate: &s2.0,
+                champion: &s2.1,
+                challenger_candidate: &s2.2,
+                challenger: &s2.3,
+            },
+        ];
+        let holdout = [
+            EvaluationPair {
+                champion_candidate: &h1.0,
+                champion: &h1.1,
+                challenger_candidate: &h1.2,
+                challenger: &h1.3,
+            },
+            EvaluationPair {
+                champion_candidate: &h2.0,
+                champion: &h2.1,
+                challenger_candidate: &h2.2,
+                challenger: &h2.3,
+            },
+        ];
+        let policy =
+            RepeatedSeedPromotionPolicy::new("repeat-v1", 2, 2, 0.10, 0.0, 10_000).unwrap();
+        let mut audit = CcosCandidateAudit::new("repeated-seed-test");
+        for pair in [&s1, &s2, &h1, &h2] {
+            record_pair(&mut audit, pair);
+        }
+
+        let decision = audit
+            .decide_repeated_seed(&selection, &holdout, &policy, Some("f".repeat(64)))
+            .unwrap();
+
+        assert_eq!(decision.adoption().decision, AdoptionDecision::Promote);
+        assert!(decision
+            .adoption()
+            .reason
+            .contains(&decision.evidence().fingerprint()));
+        assert_eq!(audit.event_log().events.len(), 18);
+        assert!(audit.event_log().verify_integrity().valid);
+    }
+
+    #[test]
+    fn forged_promotion_reason_without_recorded_evidence_is_rejected() {
+        let candidate = candidate();
+        let evaluation = evaluation(&candidate);
+        let adoption = AdoptionReceipt::new(
+            &evaluation,
+            "repeat-v1",
+            AdoptionDecision::Promote,
+            format!("holdout passed; evidence_sha256={}", "f".repeat(64)),
+            None,
+            Some("e".repeat(64)),
+        )
+        .unwrap();
+        let mut audit = CcosCandidateAudit::new("forged-promotion");
+        audit.record_candidate(&candidate).unwrap();
+        audit.record_evaluation(&candidate, &evaluation).unwrap();
+        assert!(audit.record_adoption(&evaluation, &adoption).is_err());
+        assert_eq!(audit.event_log().events.len(), 2);
     }
 }
