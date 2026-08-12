@@ -41,10 +41,25 @@ jobs:
       - name: bootstrap locked dependencies (network allowed only here)
         run: cargo fetch --locked
 
-      - name: sandbox unit tests (fail-closed semantics)
+      - name: sandbox unit tests (fail-closed + resource policy)
         env:
           CARGO_NET_OFFLINE: "true"
         run: cargo test --release -p ccos-sandbox --locked -- --nocapture
+
+      - name: candidate protocol + sealed evaluator
+        env:
+          CARGO_NET_OFFLINE: "true"
+        run: cargo test --release -p rsi --locked candidate_ -- --nocapture
+
+      - name: CCOS primary-log candidate receipt chain
+        env:
+          CARGO_NET_OFFLINE: "true"
+        run: cargo test --release -p ccos-research-lab --features rsi --locked candidate_bridge -- --nocapture
+
+      - name: Forge adapter compiles only on guarded DGM tier
+        env:
+          CARGO_NET_OFFLINE: "true"
+        run: cargo check --release -p ccos-research-lab --features rsi-dgm --locked
 
       - name: sandbox-elite injection tests (forge)
         env:
@@ -61,9 +76,12 @@ jobs:
 
       # ── Expansion contract (charter §42): the following classes MUST be
       # added as the sandbox grows, each as a named job step:
-      #   timeout tests · descendant-process termination · memory-limit ·
-      #   CPU-limit · process-limit · output-limit · symlink tests ·
+      #   timeout tests · descendant-process termination · live memory-limit ·
+      #   live CPU-limit · live process-limit · output-limit · symlink tests ·
       #   path-traversal tests · evaluator-modification detection ·
       #   test-modification detection · Docker-access denial ·
       #   SSH-access denial · exfiltration tests · atomic-promotion tests.
+      # Resource-limit argument construction is unit-tested now; the remaining
+      # "live" cases require a runner on which Bubblewrap user namespaces are
+      # guaranteed rather than merely fail-closed when unavailable.
       # A step is added only with a failing-first test proving the control.
