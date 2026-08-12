@@ -1,0 +1,41 @@
+name: temporary-rustfmt-autofix
+
+on:
+  push:
+    branches:
+      - feat/cervo-rsi-orchestrator
+
+permissions:
+  contents: write
+
+concurrency:
+  group: temporary-rustfmt-autofix
+  cancel-in-progress: true
+
+jobs:
+  rustfmt:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: feat/cervo-rsi-orchestrator
+          fetch-depth: 1
+      - run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt
+      - name: Apply the exact CI rustfmt surface
+        run: |
+          cargo +1.89.0 fmt --package ccos-research-lab
+          cargo +1.89.0 fmt --package rsi
+          cargo +1.89.0 fmt --package ccos-sandbox
+          cargo +1.89.0 fmt --manifest-path crates/forge/forge-core/Cargo.toml --
+      - name: Commit formatted sources if needed
+        run: |
+          if git diff --quiet; then
+            echo "rustfmt produced no diff"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- '*.rs'
+          git commit --no-verify -m "style: apply rustfmt to candidate pipeline"
+          git push origin HEAD:feat/cervo-rsi-orchestrator
