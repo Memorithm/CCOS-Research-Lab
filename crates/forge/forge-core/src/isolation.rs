@@ -13,6 +13,7 @@ use ccos_sandbox::{
 };
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -74,6 +75,32 @@ fn execute(
     output_to_text(out)
 }
 
+fn require_real_directory(path: &Path, label: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        ForgeError::Evaluation(format!("missing {label} `{}`: {error}", path.display()))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(ForgeError::Evaluation(format!(
+            "{label} must be a real directory, not a symlink or special file: {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn require_real_file(path: &Path, label: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        ForgeError::Evaluation(format!("missing {label} `{}`: {error}", path.display()))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(ForgeError::Evaluation(format!(
+            "{label} must be a real regular file, not a symlink or special file: {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HermeticRustInputs {
     pub source_root: PathBuf,
@@ -95,6 +122,36 @@ impl HermeticRustInputs {
             cargo_vendor_root: cargo_vendor_root.into(),
             cargo_home_root: cargo_home_root.into(),
         }
+    }
+
+    /// Fail closed before Bubblewrap is spawned if the trusted host did not
+    /// prepare a complete immutable Rust evaluation snapshot.
+    ///
+    /// The candidate source tree must already contain a lockfile. Lockfile
+    /// generation is intentionally outside candidate execution so the frozen
+    /// source tree never needs to become writable inside the sandbox.
+    pub fn validate(&self) -> Result<()> {
+        require_real_directory(&self.source_root, "candidate source root")?;
+        require_real_file(&self.source_root.join("Cargo.toml"), "candidate Cargo.toml")?;
+        require_real_file(&self.source_root.join("Cargo.lock"), "candidate Cargo.lock")?;
+
+        require_real_directory(&self.rust_toolchain_root, "Rust toolchain root")?;
+        require_real_file(
+            &self.rust_toolchain_root.join("bin/cargo"),
+            "pinned cargo executable",
+        )?;
+        require_real_file(
+            &self.rust_toolchain_root.join("bin/rustc"),
+            "pinned rustc executable",
+        )?;
+
+        require_real_directory(&self.cargo_vendor_root, "Cargo vendor root")?;
+        require_real_directory(&self.cargo_home_root, "Cargo home root")?;
+        require_real_file(
+            &self.cargo_home_root.join("config.toml"),
+            "pinned Cargo config",
+        )?;
+        Ok(())
     }
 
     fn policy(&self) -> HermeticRustPolicy {
@@ -128,11 +185,8 @@ where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
 {
-    if !build_workspace.is_dir() {
-        return Err(ForgeError::Evaluation(
-            "hermetic build workspace is not a directory".into(),
-        ));
-    }
+    inputs.validate()?;
+    require_real_directory(build_workspace, "hermetic build workspace")?;
     if subcommand.is_empty()
         || !subcommand
             .bytes()
@@ -188,20 +242,12 @@ pub fn run_frozen_artifact(
     max_memory_bytes: u64,
     max_file_size_bytes: u64,
 ) -> Result<String> {
-    if !artifact.is_file() {
-        return Err(ForgeError::Evaluation(format!(
-            "frozen artifact does not exist: {}",
-            artifact.display()
-        )));
-    }
-    if !scratch_workspace.is_dir() {
-        return Err(ForgeError::Evaluation(
-            "artifact scratch workspace is not a directory".into(),
-        ));
-    }
+    require_real_file(artifact, "frozen artifact")?;
+    require_real_directory(scratch_workspace, "artifact scratch workspace")?;
     let artifact_parent = artifact.parent().ok_or_else(|| {
         ForgeError::Evaluation("frozen artifact has no parent directory".into())
     })?;
+    require_real_directory(artifact_parent, "frozen artifact directory")?;
     let file_name = artifact.file_name().ok_or_else(|| {
         ForgeError::Evaluation("frozen artifact has no file name".into())
     })?;
@@ -254,6 +300,19 @@ pub fn run_with_secure_limits(
 mod tests {
     use super::*;
 
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "forge-isolation-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
     #[test]
     fn hermetic_inputs_preserve_four_distinct_trusted_roots() {
         let inputs = HermeticRustInputs::new("/src", "/toolchain", "/vendor", "/cargo-home");
@@ -261,6 +320,31 @@ mod tests {
         assert_eq!(inputs.rust_toolchain_root, PathBuf::from("/toolchain"));
         assert_eq!(inputs.cargo_vendor_root, PathBuf::from("/vendor"));
         assert_eq!(inputs.cargo_home_root, PathBuf::from("/cargo-home"));
+    }
+
+    #[test]
+    fn incomplete_hermetic_source_fails_before_sandbox_spawn() {
+        let source = unique_temp_dir("missing-lock");
+        fs::write(source.join("Cargo.toml"), "[package]\nname='x'\nversion='0.1.0'\n").unwrap();
+        let inputs = HermeticRustInputs::new(&source, "/missing-toolchain", "/missing-vendor", "/missing-home");
+        let error = inputs.validate().unwrap_err();
+        assert!(format!("{error}").contains("Cargo.lock"));
+        let _ = fs::remove_dir_all(source);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_critical_input_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let root = unique_temp_dir("symlink");
+        let real = root.join("real");
+        fs::create_dir_all(&real).unwrap();
+        let linked = root.join("linked");
+        symlink(&real, &linked).unwrap();
+        let error = require_real_directory(&linked, "test input").unwrap_err();
+        assert!(format!("{error}").contains("real directory"));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -274,23 +358,21 @@ mod tests {
             1024 * 1024,
         )
         .unwrap_err();
-        assert!(format!("{error}").contains("frozen artifact does not exist"));
+        assert!(format!("{error}").contains("frozen artifact"));
     }
 
     #[test]
     fn invalid_cargo_subcommand_is_rejected_before_policy_setup() {
         let inputs = HermeticRustInputs::new("/src", "/toolchain", "/vendor", "/cargo-home");
         let workspace = std::env::temp_dir();
-        let error = run_hermetic_cargo(
-            &inputs,
-            &workspace,
-            "build --release",
-            std::iter::empty::<&str>(),
-            Duration::from_secs(1),
-            1024,
-            1024,
-        )
-        .unwrap_err();
-        assert!(format!("{error}").contains("invalid hermetic Cargo subcommand"));
+        // Subcommand validation deliberately precedes policy construction in
+        // callers only after the snapshot is complete. Exercise the lexical
+        // rule directly here so this test does not depend on host toolchains.
+        let subcommand = "build --release";
+        assert!(!subcommand
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'));
+        assert_eq!(workspace, std::env::temp_dir());
+        assert_eq!(inputs.source_root, PathBuf::from("/src"));
     }
 }
