@@ -17,6 +17,7 @@ jobs:
         with:
           ref: feat/counterexample-shrinking-v1
           fetch-depth: 1
+      - run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt
       - name: Apply targeted invariant corrections
         run: |
           python3 - <<'PY'
