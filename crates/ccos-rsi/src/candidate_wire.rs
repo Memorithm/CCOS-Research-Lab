@@ -1,9 +1,10 @@
 //! Deterministic JSON transport for candidate protocol v1.
 //!
 //! JSON is transport only: receipt fingerprints remain the canonical binary
-//! encodings defined by `candidate_protocol`. u64 values are decimal strings and
-//! f64 objectives are transported by their exact IEEE-754 bit pattern so a JSON
-//! parser cannot silently change experiment identity.
+//! encodings defined by `candidate_protocol`. u64 values are canonical decimal
+//! strings and f64 objectives are transported by their exact lowercase
+//! IEEE-754 bit pattern so a JSON parser cannot silently change experiment
+//! identity.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -97,18 +98,29 @@ fn required_u16(
 ) -> Result<u16, CandidateWireError> {
     let value = map
         .get(key)
-        .and_then(Json::as_u64)
+        .and_then(Json::as_f64)
+        .filter(|value| {
+            value.is_finite()
+                && *value >= 0.0
+                && value.fract() == 0.0
+                && *value <= u16::MAX as f64
+        })
         .ok_or(CandidateWireError::Invalid(key))?;
-    u16::try_from(value).map_err(|_| CandidateWireError::Invalid(key))
+    Ok(value as u16)
 }
 
 fn required_u64_string(
     map: &BTreeMap<String, Json>,
     key: &'static str,
 ) -> Result<u64, CandidateWireError> {
-    required_string(map, key)?
+    let raw = required_string(map, key)?;
+    let value = raw
         .parse::<u64>()
-        .map_err(|_| CandidateWireError::Invalid(key))
+        .map_err(|_| CandidateWireError::Invalid(key))?;
+    if value.to_string() != raw {
+        return Err(CandidateWireError::Invalid(key));
+    }
+    Ok(value)
 }
 
 fn origin_name(origin: CandidateOrigin) -> &'static str {
@@ -240,7 +252,11 @@ fn decode_objective(value: Json) -> Result<ObjectiveValue, CandidateWireError> {
     let map = require_object(value)?;
     require_exact_keys(&map, &["minimize", "name", "value_bits"])?;
     let bits = required_string(&map, "value_bits")?;
-    if bits.len() != 16 || !bits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if bits.len() != 16
+        || !bits
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
         return Err(CandidateWireError::Invalid("objective.value_bits"));
     }
     let bits = u64::from_str_radix(&bits, 16)
@@ -459,13 +475,45 @@ mod tests {
     }
 
     #[test]
+    fn noncanonical_u64_seed_is_rejected() {
+        let original = candidate(7);
+        let wire = encode_candidate(&original).unwrap();
+        let tampered = wire.replace("\"trial_seed\":\"7\"", "\"trial_seed\":\"007\"");
+        assert!(decode_candidate(&tampered).is_err());
+    }
+
+    #[test]
+    fn fractional_schema_version_is_rejected() {
+        let original = candidate(7);
+        let wire = encode_candidate(&original).unwrap();
+        let tampered = wire.replace("\"schema_version\":1", "\"schema_version\":1.5");
+        assert!(decode_candidate(&tampered).is_err());
+    }
+
+    #[test]
     fn evaluation_wire_preserves_exact_f64_bits_and_scirust_fingerprint() {
         let candidate = candidate(7);
         let original = evaluation(&candidate);
         let wire = encode_evaluation(&candidate, &original).unwrap();
         let decoded = decode_evaluation(&wire, &candidate).unwrap();
-        assert_eq!(decoded.objectives[0].value.to_bits(), original.objectives[0].value.to_bits());
+        assert_eq!(
+            decoded.objectives[0].value.to_bits(),
+            original.objectives[0].value.to_bits()
+        );
         assert_eq!(decoded.fingerprint(), original.fingerprint());
+    }
+
+    #[test]
+    fn uppercase_objective_bits_are_rejected_as_noncanonical() {
+        let candidate = candidate(8);
+        let original = evaluation(&candidate);
+        let wire = encode_evaluation(&candidate, &original).unwrap();
+        let bits = format!("{:016x}", original.objectives[0].value.to_bits());
+        let uppercase = bits.to_ascii_uppercase();
+        if uppercase != bits {
+            let tampered = wire.replace(&bits, &uppercase);
+            assert!(decode_evaluation(&tampered, &candidate).is_err());
+        }
     }
 
     #[test]
@@ -474,9 +522,9 @@ mod tests {
         let evaluation = evaluation(&candidate);
         let original = AdoptionReceipt::new(
             &evaluation,
-            "cc-v1",
+            "repeat-v1",
             AdoptionDecision::Promote,
-            "comparable improvement",
+            format!("holdout passed; evidence_sha256={}", "f".repeat(64)),
             None,
             Some("e".repeat(64)),
         )
