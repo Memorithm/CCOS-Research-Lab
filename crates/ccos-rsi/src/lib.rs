@@ -52,6 +52,7 @@ pub mod audit;
 // `rsi` feature) — CCOS depends on `rsi`, not the reverse, so this crate has no
 // edge on `ccos`. `AuditEvent::payload()` was promoted to `pub` to let the moved
 // adapter build the canonical payload string.
+pub mod candidate_policy;
 pub mod candidate_protocol;
 pub mod checkpoint;
 pub mod cma;
@@ -106,6 +107,9 @@ pub use agent::{RSIAgent, StepReport};
 pub use api::{ApiResult, RsiApi};
 pub use ascent::{ascend, Guard, RefineTask, Report, StopReason as AscentStop};
 pub use audit::{AuditEvent, AuditLog, HashChainLog, TraceEvent};
+pub use candidate_policy::{
+    validate_adoption, validate_candidate, validate_evaluation, ChampionChallengerPolicy,
+};
 pub use candidate_protocol::{
     AdoptionDecision, AdoptionReceipt, CandidateEnvelope, CandidateHarness, CandidateOrigin,
     CandidateProtocolError, EvaluationReceipt, EvaluationStatus, GuardedCandidateEvaluator,
