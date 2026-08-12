@@ -1,0 +1,28 @@
+[package]
+name = "scirust-rsi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+autobins = false
+autoexamples = false
+description = "Bounded, sandboxed recursive self-improvement algorithms — self-refine, STaR, expert iteration, evolution strategies, PBT, and LLM-driven loops."
+license-file = "LICENSE.md"
+repository = "https://github.com/Memorithm/scirust"
+
+[dependencies]
+rand = "0.8"
+rand_distr = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
+ureq = { version = "2", features = ["json"], optional = true }
+rayon = { version = "1.10", optional = true }
+
+[features]
+default = []
+parallel = ["dep:rayon"]
+anthropic = ["dep:ureq", "dep:serde_json"]
+mcp = ["dep:serde_json"]
+
+# Keep the vendored dependency outside the parent workspace while allowing it
+# to be consumed as a path dependency by crates/ccos-rsi.
+[workspace]
