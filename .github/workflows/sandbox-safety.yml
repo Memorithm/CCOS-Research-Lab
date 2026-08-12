@@ -16,33 +16,48 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: sandbox-safety-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   sandbox:
     name: sandbox + generated-code execution safety
     runs-on: ubuntu-24.04
-    env:
-      # belt-and-braces: prove the job holds no usable secrets
-      CARGO_NET_OFFLINE: "true"
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal
 
       - name: no-secret posture (job env must be empty of tokens)
         run: |
-          ! env | grep -iE 'token|secret|api[_-]?key|password' | grep -v 'CARGO_NET_OFFLINE'
+          ! env | grep -iE 'token|secret|api[_-]?key|password'
           echo "no secrets present in job environment"
 
+      # Dependency acquisition is infrastructure bootstrap, not candidate
+      # evaluation. Populate Cargo's registry/git caches explicitly while the
+      # read-only job still has network, then make every sandbox/evaluator step
+      # below prove that it succeeds with Cargo offline.
+      - name: bootstrap locked dependencies (network allowed only here)
+        run: cargo fetch --locked
+
       - name: sandbox unit tests (fail-closed semantics)
-        run: cargo test --release -p ccos-sandbox -- --nocapture
+        env:
+          CARGO_NET_OFFLINE: "true"
+        run: cargo test --release -p ccos-sandbox --locked -- --nocapture
 
       - name: sandbox-elite injection tests (forge)
-        run: cargo test --release -p forge-core sandbox -- --nocapture
+        env:
+          CARGO_NET_OFFLINE: "true"
+        run: cargo test --release -p forge-core sandbox --locked -- --nocapture
 
       - name: no-network during evaluation
+        env:
+          CARGO_NET_OFFLINE: "true"
         run: |
           # The guarded evaluator must pin cargo offline; verify the pin exists.
           grep -R 'CARGO_NET_OFFLINE\|--offline --frozen' -n src/rsi_bridge.rs crates/ccos-rsi/src | head -5
-          cargo test --release -p ccos-research-lab --features rsi rsi_bridge -- --nocapture
+          cargo test --release -p ccos-research-lab --features rsi --locked rsi_bridge -- --nocapture
 
       # ── Expansion contract (charter §42): the following classes MUST be
       # added as the sandbox grows, each as a named job step:
