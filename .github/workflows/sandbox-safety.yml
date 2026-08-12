@@ -56,7 +56,7 @@ jobs:
           CARGO_NET_OFFLINE: "true"
         run: cargo test --release -p ccos-research-lab --features rsi --locked candidate_bridge -- --nocapture
 
-      - name: Forge adapter compiles only on guarded DGM tier
+      - name: guarded DGM tier compiles locked
         env:
           CARGO_NET_OFFLINE: "true"
         run: cargo check --release -p ccos-research-lab --features rsi-dgm --locked
