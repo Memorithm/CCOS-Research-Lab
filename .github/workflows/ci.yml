@@ -32,7 +32,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt
-      - run: cargo +1.89.0 fmt --package ccos-research-lab --check
+      - name: Format touched candidate-execution boundary
+        run: |
+          cargo +1.89.0 fmt --package ccos-research-lab --check
+          cargo +1.89.0 fmt --package rsi --check
+          cargo +1.89.0 fmt --package ccos-sandbox --check
+          cargo +1.89.0 fmt --manifest-path crates/forge/forge-core/Cargo.toml -- --check
 
   clippy-default:
     needs: format
@@ -70,22 +75,33 @@ jobs:
       - run: cargo +stable test --locked
 
   test-premium-deterministic:
+    name: premium deterministic (${{ matrix.name }})
     needs: clippy-default
     runs-on: ubuntu-24.04
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: license-sync
+            features: license,license-pq,signed-sync
+          - name: slhav2-embed
+            features: slhav2,learned-embed
+          - name: octasoma-octacore
+            features: octasoma,octacore
+          - name: rsi
+            features: rsi
+          - name: pro-default
+            features: pro-default
     env:
       # Premium feature sets include native crypto builds; cap parallelism to
-      # avoid exhausting the hosted runner and losing runner communication.
+      # avoid exhausting each hosted runner and losing runner communication.
       CARGO_BUILD_JOBS: "2"
       RUST_TEST_THREADS: "2"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - run: rustup toolchain install 1.89.0 --profile minimal
-      - run: cargo +1.89.0 test --features license,license-pq,signed-sync --locked
-      - run: cargo +1.89.0 test --features slhav2,learned-embed --locked
-      - run: cargo +1.89.0 test --features octasoma,octacore --locked
-      - run: cargo +1.89.0 test --features rsi --locked
-      - run: cargo +1.89.0 test --features pro-default --locked
+      - run: cargo +1.89.0 test --features "${{ matrix.features }}" --locked
 
   test-replay-relax:
     needs: clippy-default
@@ -110,7 +126,7 @@ jobs:
       - run: >-
           cargo +1.89.0 test --locked
           -p scirust -p slha-mcp -p slha-c -p ccos-memory-runtime
-          -p octacore -p rsi
+          -p octacore -p rsi -p ccos-sandbox
       - name: Canonical OctaSoma dependency path
         run: cargo +1.89.0 test --features octasoma --lib --locked
 
