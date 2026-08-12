@@ -126,7 +126,9 @@ jobs:
       - run: >-
           cargo +1.89.0 test --locked
           -p scirust -p slha-mcp -p slha-c -p ccos-memory-runtime
-          -p octasoma -p octacore -p rsi -p ccos-sandbox
+          -p octacore -p rsi -p ccos-sandbox
+      - name: Canonical OctaSoma dependency path
+        run: cargo +1.89.0 test --features octasoma --lib --locked
 
   feature-combinations:
     needs: clippy-default
