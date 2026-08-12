@@ -59,6 +59,7 @@ pub mod candidate_wire;
 pub mod checkpoint;
 pub mod cma;
 pub mod convergence;
+pub mod counterexample;
 pub mod criticality;
 // Boucle d'auto-amélioration empirique (Darwin–Gödel / STOP) — port std-only de
 // `soul-rsi` : propose un patch → build+test en copie isolée → garde si meilleur.
@@ -131,6 +132,12 @@ pub use candidate_wire::{
 pub use checkpoint::Checkpoint;
 pub use cma::SepCmaEs;
 pub use convergence::{ConvergenceDetector, Trend};
+pub use counterexample::{
+    validate_counterexample_receipt, ChunkDeletionShrinker, CounterexampleConfig,
+    CounterexampleEngine, CounterexampleGenerator, CounterexampleOracle, CounterexampleReceipt,
+    CounterexampleSearchResult, CounterexampleShrinker, CounterexampleWitness, OracleVerdict,
+    COUNTEREXAMPLE_PROTOCOL_VERSION,
+};
 pub use criticality::{RiskConfig, RiskModel, RiskReport, RiskSignals};
 pub use dynamics::{Dynamics, StabilityConfig, StepInfo};
 #[cfg(feature = "execution-attestation")]
