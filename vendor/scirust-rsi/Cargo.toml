@@ -22,3 +22,6 @@ default = []
 parallel = ["dep:rayon"]
 anthropic = ["dep:ureq", "dep:serde_json"]
 mcp = ["dep:serde_json"]
+
+[dev-dependencies]
+serde_json = "1"
