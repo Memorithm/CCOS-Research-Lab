@@ -544,11 +544,7 @@ mod tests {
             "ccos-one-case-v1"
         }
 
-        fn generate(
-            &self,
-            _seed: u64,
-            _ordinal: u64,
-        ) -> Result<Vec<u8>, CandidateProtocolError> {
+        fn generate(&self, _seed: u64, _ordinal: u64) -> Result<Vec<u8>, CandidateProtocolError> {
             Ok(vec![1, 42, 2])
         }
     }
