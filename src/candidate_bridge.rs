@@ -381,7 +381,12 @@ mod tests {
         let challenger_candidate = candidate_with_source_and_seed(b"challenger", seed);
         let champion = evaluation_with_latency(&champion_candidate, 100.0);
         let challenger = evaluation_with_latency(&challenger_candidate, challenger_latency);
-        (champion_candidate, champion, challenger_candidate, challenger)
+        (
+            champion_candidate,
+            champion,
+            challenger_candidate,
+            challenger,
+        )
     }
 
     fn record_pair(
