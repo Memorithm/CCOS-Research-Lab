@@ -41,7 +41,7 @@ jobs:
       - run: cargo +nightly miri setup
       - run: cargo +nightly miri test -p ccos-memory-runtime
       - run: cargo +nightly miri test -p rsi --lib
-      - run: cargo +nightly miri test -p ccos-research-lab --features octasoma --lib
+      - run: cargo +nightly miri test -p octasoma --lib
 
   address-sanitizer:
     runs-on: ubuntu-24.04

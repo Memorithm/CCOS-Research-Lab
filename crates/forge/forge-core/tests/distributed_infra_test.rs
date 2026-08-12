@@ -9,7 +9,7 @@
 //!    de connexion.
 //! 4. Valide que 100% des réponses sont collectées sans corruption.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
@@ -17,9 +17,56 @@ use std::thread;
 use std::time::Duration;
 
 use forge_core::evaluate_parallel_distributed;
-use forge_core::protocol::{EvaluationPayload, EvaluationResult};
+use forge_core::protocol::{EvaluationPayload, EvaluationResult, MAX_FRAME_BYTES};
 use forge_core::{Candidate, CandidateId};
 use forge_core::{Individual, Trial};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
+// ---------------------------------------------------------------------------
+// Framing identique au protocole Forge de production
+// ---------------------------------------------------------------------------
+
+fn read_json_frame<R, T>(reader: &mut R) -> std::io::Result<T>
+where
+    R: Read,
+    T: DeserializeOwned,
+{
+    let mut len_bytes = [0_u8; 4];
+    reader.read_exact(&mut len_bytes)?;
+    let len = u32::from_be_bytes(len_bytes) as usize;
+    if len > MAX_FRAME_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "oversized Forge frame",
+        ));
+    }
+    let mut payload = vec![0_u8; len];
+    reader.read_exact(&mut payload)?;
+    serde_json::from_slice(&payload)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+}
+
+fn write_json_frame<W, T>(writer: &mut W, value: &T) -> std::io::Result<()>
+where
+    W: Write,
+    T: Serialize,
+{
+    let payload = serde_json::to_vec(value)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    if payload.len() > MAX_FRAME_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "oversized Forge frame",
+        ));
+    }
+    let len = u32::try_from(payload.len()).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "Forge frame too large")
+    })?;
+    writer.write_all(&len.to_be_bytes())?;
+    writer.write_all(&payload)?;
+    writer.flush()
+}
 
 // ---------------------------------------------------------------------------
 // Candidat de stub pour le test
@@ -69,7 +116,6 @@ fn evaluate_stub(payload: &EvaluationPayload) -> EvaluationResult {
             error_message: Some("Timeout dépassé : boucle infinie détectée, processus tué.".into()),
         }
     } else {
-        // Candidat valide — objectifs simulés
         let base_latency = 1000.0 + (payload.candidate_id as f64 % 100.0) * 10.0;
         EvaluationResult {
             candidate_id: payload.candidate_id,
@@ -86,7 +132,6 @@ fn evaluate_stub(payload: &EvaluationPayload) -> EvaluationResult {
 
 #[test]
 fn test_distributed_evolution_under_stress() {
-    // ── 1. Démarrage du Worker mock ──
     let barrier = Arc::new(Barrier::new(2));
     let shutdown = Arc::new(AtomicBool::new(false));
     let worker_errors = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -104,10 +149,7 @@ fn test_distributed_evolution_under_stress() {
             }
         };
 
-        // Non-bloquant pour permettre l'arrêt propre
         listener.set_nonblocking(true).expect("set_nonblocking");
-
-        // Signale que le worker est prêt
         b.wait();
 
         loop {
@@ -117,27 +159,19 @@ fn test_distributed_evolution_under_stress() {
 
             match listener.accept() {
                 Ok((mut stream, _peer)) => {
-                    // Une tâche par connexion pour la concurrence
                     thread::spawn(move || {
                         stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
                         stream.set_write_timeout(Some(Duration::from_secs(10))).ok();
 
-                        let payload: EvaluationPayload =
-                            match bincode::deserialize_from(&mut stream) {
-                                Ok(p) => p,
-                                Err(_) => return,
-                            };
-
+                        let payload: EvaluationPayload = match read_json_frame(&mut stream) {
+                            Ok(payload) => payload,
+                            Err(_) => return,
+                        };
                         let result = evaluate_stub(&payload);
-
-                        if let Ok(bytes) = bincode::serialize(&result) {
-                            let _ = stream.write_all(&bytes);
-                            let _ = stream.flush();
-                        }
+                        let _ = write_json_frame(&mut stream, &result);
                     });
                 }
                 Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    // Pas de connexion entrante — courte pause
                     thread::sleep(Duration::from_millis(5));
                 }
                 Err(err) => {
@@ -148,29 +182,21 @@ fn test_distributed_evolution_under_stress() {
         }
     });
 
-    // ── 2. Attente de la disponibilité du Worker ──
     barrier.wait();
 
-    // ── 3. Construction des 50 candidats de stress ──
     let mut population: Vec<StubCandidate> = Vec::with_capacity(50);
-
-    // 10 candidats parfaits (valides avec score)
     for i in 0..10u64 {
         population.push(StubCandidate {
             id: i,
             source: format!("valid_fn_{i}"),
         });
     }
-
-    // 20 candidats syntaxiquement faux
     for i in 10..30u64 {
         population.push(StubCandidate {
             id: i,
             source: format!("syntax_error_fn_{i}"),
         });
     }
-
-    // 20 candidats avec boucle infinie
     for i in 30..50u64 {
         population.push(StubCandidate {
             id: i,
@@ -178,7 +204,6 @@ fn test_distributed_evolution_under_stress() {
         });
     }
 
-    // ── 4. Dispatch distribué via Rayon ──
     let workers = vec!["127.0.0.1:19999".to_string()];
     let trial = Trial {
         generation: 0,
@@ -186,40 +211,27 @@ fn test_distributed_evolution_under_stress() {
     };
     let failure_sink = Mutex::new(Vec::new());
 
-    let individuals: Vec<Individual<StubCandidate>> = evaluate_parallel_distributed(
-        &population,
-        &workers,
-        &trial,
-        None, // pas de registre Sled dans ce test
-        None,
-        0,
-        &failure_sink,
-    );
+    let individuals: Vec<Individual<StubCandidate>> =
+        evaluate_parallel_distributed(&population, &workers, &trial, None, None, 0, &failure_sink);
 
-    // ── 5. Assertions ──
-
-    // 5a. 100% des 50 réponses collectées
     assert_eq!(
         individuals.len(),
         50,
         "Tous les candidats doivent avoir une réponse (50 attendus)"
     );
 
-    // 5b. 10 valides
     let valid_count = individuals.iter().filter(|i| i.score.valid).count();
     assert_eq!(
         valid_count, 10,
         "10 candidats valides attendus, trouvé {valid_count}"
     );
 
-    // 5c. 40 invalides (20 syntax + 20 loop)
     let invalid_count = individuals.iter().filter(|i| !i.score.valid).count();
     assert_eq!(
         invalid_count, 40,
         "40 candidats invalides attendus, trouvé {invalid_count}"
     );
 
-    // 5d. Vérification des objectifs pour les valides
     for ind in &individuals {
         if ind.score.valid {
             assert!(
@@ -230,7 +242,6 @@ fn test_distributed_evolution_under_stress() {
                 ind.score.objectives.iter().all(|x| x.is_finite()),
                 "Les objectifs doivent être finis"
             );
-            // Vérification du matching candidate_id
             assert!(
                 ind.cand.id < 10,
                 "Seuls les 10 premiers candidats doivent être valides"
@@ -238,7 +249,6 @@ fn test_distributed_evolution_under_stress() {
         }
     }
 
-    // 5e. Aucune corruption du canal : chaque individu correspond à son candidat
     for (idx, ind) in individuals.iter().enumerate() {
         assert_eq!(
             ind.cand.id, idx as u64,
@@ -246,7 +256,6 @@ fn test_distributed_evolution_under_stress() {
         );
     }
 
-    // 5f. Les failure_diagnostics devraient être vides (pas de panne réseau)
     let failures = failure_sink.into_inner().unwrap();
     assert!(
         failures.is_empty(),
@@ -256,7 +265,6 @@ fn test_distributed_evolution_under_stress() {
         failures
     );
 
-    // 5g. Vérification des erreurs worker (devrait être vide si tout s'est bien passé)
     let worker_errs = worker_errors.lock().unwrap();
     assert!(
         worker_errs.is_empty(),
@@ -264,9 +272,7 @@ fn test_distributed_evolution_under_stress() {
         *worker_errs
     );
 
-    // ── 6. Arrêt propre du Worker ──
     shutdown.store(true, Ordering::Relaxed);
-    // On laisse le worker se terminer — le join a un timeout court
     let _ = worker_handle.join();
 }
 
@@ -283,7 +289,7 @@ fn test_distributed_worker_unreachable_is_resilient() {
         })
         .collect();
 
-    let workers = vec!["127.0.0.1:19998".to_string()]; // port sans écoute
+    let workers = vec!["127.0.0.1:19998".to_string()];
     let trial = Trial {
         generation: 0,
         seed: 42,
@@ -293,22 +299,17 @@ fn test_distributed_worker_unreachable_is_resilient() {
     let individuals: Vec<Individual<StubCandidate>> =
         evaluate_parallel_distributed(&population, &workers, &trial, None, None, 0, &failure_sink);
 
-    // Tous les candidats doivent revenir (marqués invalides)
     assert_eq!(individuals.len(), 5);
-
-    // Tous invalides car le worker est injoignable
     for ind in &individuals {
         assert!(!ind.score.valid, "Worker injoignable → tous invalides");
     }
 
-    // Des diagnostics d'échec doivent avoir été collectés
     let failures = failure_sink.into_inner().unwrap();
     assert!(
         !failures.is_empty(),
         "Des diagnostics d'échec réseau doivent être produits"
     );
 
-    // Vérifier que les diagnostics mentionnent bien le worker
     for diag in &failures {
         assert!(
             diag.stderr.contains("127.0.0.1:19998")
@@ -326,7 +327,6 @@ fn test_distributed_worker_unreachable_is_resilient() {
 
 #[test]
 fn test_round_robin_distribution() {
-    // Démarre un worker mock pour le Round-Robin
     let barrier = Arc::new(Barrier::new(2));
     let shutdown = Arc::new(AtomicBool::new(false));
 
@@ -346,12 +346,10 @@ fn test_round_robin_distribution() {
                 Ok((mut stream, _)) => {
                     thread::spawn(move || {
                         stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
-                        let payload: EvaluationPayload =
-                            bincode::deserialize_from(&mut stream).unwrap();
+                        stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
+                        let payload: EvaluationPayload = read_json_frame(&mut stream).unwrap();
                         let result = evaluate_stub(&payload);
-                        let bytes = bincode::serialize(&result).unwrap();
-                        let _ = stream.write_all(&bytes);
-                        let _ = stream.flush();
+                        write_json_frame(&mut stream, &result).unwrap();
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -364,7 +362,6 @@ fn test_round_robin_distribution() {
 
     barrier.wait();
 
-    // 10 candidats, 2 workers (même adresse répétée = Round-Robin vers même worker)
     let population: Vec<StubCandidate> = (0..10u64)
         .map(|i| StubCandidate {
             id: i,
@@ -372,8 +369,6 @@ fn test_round_robin_distribution() {
         })
         .collect();
 
-    // Simuler 2 workers (même adresse pour le test — dans la pratique ce
-    // seraient des machines différentes)
     let workers = vec!["127.0.0.1:19997".to_string(), "127.0.0.1:19997".to_string()];
     let trial = Trial {
         generation: 0,
@@ -385,7 +380,6 @@ fn test_round_robin_distribution() {
         evaluate_parallel_distributed(&population, &workers, &trial, None, None, 0, &failure_sink);
 
     assert_eq!(individuals.len(), 10);
-    // Tous valides
     assert!(individuals.iter().all(|i| i.score.valid));
 
     shutdown.store(true, Ordering::Relaxed);
