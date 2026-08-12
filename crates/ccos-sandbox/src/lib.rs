@@ -5,15 +5,26 @@
 //! structured arguments; shell parsing is never involved. Declared POSIX
 //! resource ceilings are applied with `prlimit(1)` *inside* the Bubblewrap
 //! boundary; requesting a ceiling when `prlimit` is unavailable fails closed.
+//!
+//! Runner-owned read-only mounts separate trusted immutable inputs (candidate
+//! source snapshot, verifier, toolchain, Cargo vendor tree) from the single
+//! writable build workspace. Candidate-controlled specifications cannot add
+//! mounts or override protected process-environment variables.
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+
+pub const SANDBOX_WORKSPACE: &str = "/workspace";
+pub const HERMETIC_SOURCE_ROOT: &str = "/candidate-src";
+pub const HERMETIC_RUST_TOOLCHAIN_ROOT: &str = "/rust-toolchain";
+pub const HERMETIC_CARGO_VENDOR_ROOT: &str = "/cargo-vendor";
+pub const HERMETIC_CARGO_HOME_ROOT: &str = "/cargo-home";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NetworkPolicy {
@@ -39,6 +50,80 @@ impl ReadOnlyMount {
             source: source.into(),
             target: target.into(),
         }
+    }
+}
+
+/// Infrastructure-owned inputs for a Cargo/Rust evaluation.
+///
+/// The source root must already contain the trusted manifest/verifier snapshot
+/// and any lock/config files required by the evaluation. All four inputs are
+/// mounted read-only. Only `/workspace` remains writable for Cargo target files
+/// and runtime scratch data.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HermeticRustPolicy {
+    pub source_root: PathBuf,
+    pub rust_toolchain_root: PathBuf,
+    pub cargo_vendor_root: PathBuf,
+    pub cargo_home_root: PathBuf,
+}
+
+impl HermeticRustPolicy {
+    pub fn new(
+        source_root: impl Into<PathBuf>,
+        rust_toolchain_root: impl Into<PathBuf>,
+        cargo_vendor_root: impl Into<PathBuf>,
+        cargo_home_root: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            source_root: source_root.into(),
+            rust_toolchain_root: rust_toolchain_root.into(),
+            cargo_vendor_root: cargo_vendor_root.into(),
+            cargo_home_root: cargo_home_root.into(),
+        }
+    }
+
+    pub fn cargo_program() -> PathBuf {
+        PathBuf::from(HERMETIC_RUST_TOOLCHAIN_ROOT).join("bin/cargo")
+    }
+
+    pub fn rustc_program() -> PathBuf {
+        PathBuf::from(HERMETIC_RUST_TOOLCHAIN_ROOT).join("bin/rustc")
+    }
+
+    pub fn candidate_manifest() -> PathBuf {
+        PathBuf::from(HERMETIC_SOURCE_ROOT).join("Cargo.toml")
+    }
+
+    fn runner_mounts(&self) -> Vec<ReadOnlyMount> {
+        vec![
+            ReadOnlyMount::new(&self.source_root, HERMETIC_SOURCE_ROOT),
+            ReadOnlyMount::new(&self.rust_toolchain_root, HERMETIC_RUST_TOOLCHAIN_ROOT),
+            ReadOnlyMount::new(&self.cargo_vendor_root, HERMETIC_CARGO_VENDOR_ROOT),
+            ReadOnlyMount::new(&self.cargo_home_root, HERMETIC_CARGO_HOME_ROOT),
+        ]
+    }
+
+    fn protected_environment(&self) -> BTreeMap<OsString, OsString> {
+        let mut environment = BTreeMap::new();
+        environment.insert(
+            "PATH".into(),
+            format!("{HERMETIC_RUST_TOOLCHAIN_ROOT}/bin:/usr/bin:/bin").into(),
+        );
+        environment.insert("CARGO_HOME".into(), HERMETIC_CARGO_HOME_ROOT.into());
+        environment.insert("CARGO_NET_OFFLINE".into(), "true".into());
+        environment.insert("CARGO_TARGET_DIR".into(), "/workspace/target".into());
+        environment.insert("CARGO_INCREMENTAL".into(), "0".into());
+        environment.insert(
+            "RUSTC".into(),
+            Self::rustc_program().into_os_string(),
+        );
+        environment.insert("RUST_BACKTRACE".into(), "0".into());
+        environment.insert("CARGO_TERM_COLOR".into(), "never".into());
+        environment
+    }
+
+    pub fn runner(&self) -> Result<LinuxBubblewrap, SandboxError> {
+        LinuxBubblewrap::with_policy(self.runner_mounts(), self.protected_environment())
     }
 }
 
@@ -97,6 +182,7 @@ pub trait SandboxRunner {
 #[derive(Clone, Debug, Default)]
 pub struct LinuxBubblewrap {
     read_only_mounts: Vec<ReadOnlyMount>,
+    protected_environment: BTreeMap<OsString, OsString>,
 }
 
 impl LinuxBubblewrap {
@@ -105,14 +191,33 @@ impl LinuxBubblewrap {
     pub fn with_read_only_mounts(
         read_only_mounts: Vec<ReadOnlyMount>,
     ) -> Result<Self, SandboxError> {
+        Self::with_policy(read_only_mounts, BTreeMap::new())
+    }
+
+    /// Construct a runner policy with immutable mounts and environment pins.
+    /// Protected environment keys cannot be supplied by the candidate spec.
+    pub fn with_policy(
+        read_only_mounts: Vec<ReadOnlyMount>,
+        protected_environment: BTreeMap<OsString, OsString>,
+    ) -> Result<Self, SandboxError> {
         for mount in &read_only_mounts {
             Self::validate_mount(mount)?;
         }
-        Ok(Self { read_only_mounts })
+        for key in protected_environment.keys() {
+            Self::validate_environment_key(key)?;
+        }
+        Ok(Self {
+            read_only_mounts,
+            protected_environment,
+        })
     }
 
     pub fn read_only_mounts(&self) -> &[ReadOnlyMount] {
         &self.read_only_mounts
+    }
+
+    pub fn protected_environment(&self) -> &BTreeMap<OsString, OsString> {
+        &self.protected_environment
     }
 
     fn executable() -> Result<PathBuf, SandboxError> {
@@ -190,7 +295,7 @@ impl LinuxBubblewrap {
             ));
         }
         let forbidden = [
-            "/workspace",
+            SANDBOX_WORKSPACE,
             "/usr",
             "/bin",
             "/lib",
@@ -204,6 +309,56 @@ impl LinuxBubblewrap {
                 "read-only mount target is reserved: {}",
                 mount.target.display()
             )));
+        }
+        Ok(())
+    }
+
+    fn is_reserved_environment_key(key: &OsStr) -> bool {
+        let key = key.to_string_lossy();
+        matches!(
+            key.as_ref(),
+            "HOME"
+                | "PATH"
+                | "LANG"
+                | "LC_ALL"
+                | "TMPDIR"
+                | "CARGO_HOME"
+                | "CARGO_NET_OFFLINE"
+                | "CARGO_TARGET_DIR"
+                | "CARGO_INCREMENTAL"
+                | "CARGO_TERM_COLOR"
+                | "RUSTC"
+                | "RUSTDOC"
+                | "RUSTUP_HOME"
+                | "RUSTUP_TOOLCHAIN"
+                | "RUSTC_WRAPPER"
+                | "RUSTC_WORKSPACE_WRAPPER"
+                | "RUST_BACKTRACE"
+                | "LD_PRELOAD"
+                | "LD_LIBRARY_PATH"
+        )
+    }
+
+    fn validate_environment_key(key: &OsStr) -> Result<(), SandboxError> {
+        if key.is_empty() || key.to_string_lossy().contains('=') {
+            return Err(SandboxError::PolicyViolation(
+                "invalid sandbox environment key".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_spec_environment(&self, spec: &SandboxSpec) -> Result<(), SandboxError> {
+        for key in spec.environment.keys() {
+            Self::validate_environment_key(key)?;
+            if Self::is_reserved_environment_key(key)
+                || self.protected_environment.contains_key(key)
+            {
+                return Err(SandboxError::PolicyViolation(format!(
+                    "candidate spec may not override protected environment key {}",
+                    key.to_string_lossy()
+                )));
+            }
         }
         Ok(())
     }
@@ -241,6 +396,7 @@ impl SandboxRunner for LinuxBubblewrap {
         for mount in &self.read_only_mounts {
             Self::validate_mount(mount)?;
         }
+        self.validate_spec_environment(spec)?;
 
         let bwrap = Self::executable()?;
         let resource_limits = Self::resource_limit_args(spec)?;
@@ -279,17 +435,17 @@ impl SandboxRunner for LinuxBubblewrap {
             "/dev/urandom",
             "/dev/urandom",
             "--dir",
-            "/workspace",
+            SANDBOX_WORKSPACE,
         ]);
         cmd.args(["--bind"])
             .arg(workspace)
-            .args(["/workspace"]);
+            .arg(SANDBOX_WORKSPACE);
         for mount in &self.read_only_mounts {
             cmd.arg("--ro-bind").arg(&mount.source).arg(&mount.target);
         }
         cmd.args([
             "--chdir",
-            "/workspace",
+            SANDBOX_WORKSPACE,
             "--setenv",
             "HOME",
             "/tmp",
@@ -299,9 +455,18 @@ impl SandboxRunner for LinuxBubblewrap {
             "--setenv",
             "LANG",
             "C",
+            "--setenv",
+            "LC_ALL",
+            "C",
+            "--setenv",
+            "TMPDIR",
+            "/tmp",
         ]);
-        for (k, v) in &spec.environment {
-            cmd.arg("--setenv").arg(k).arg(v);
+        for (key, value) in &spec.environment {
+            cmd.arg("--setenv").arg(key).arg(value);
+        }
+        for (key, value) in &self.protected_environment {
+            cmd.arg("--setenv").arg(key).arg(value);
         }
         cmd.arg("--");
         if let Some((prlimit, limit_args)) = resource_limits {
@@ -453,7 +618,7 @@ mod tests {
 
     #[test]
     fn reserved_readonly_mount_target_is_rejected() {
-        let mount = ReadOnlyMount::new(std::env::temp_dir(), "/workspace");
+        let mount = ReadOnlyMount::new(std::env::temp_dir(), SANDBOX_WORKSPACE);
         assert!(matches!(
             LinuxBubblewrap::with_read_only_mounts(vec![mount]),
             Err(SandboxError::PolicyViolation(_))
@@ -462,9 +627,50 @@ mod tests {
 
     #[test]
     fn top_level_readonly_mount_is_runner_owned() {
-        let mount = ReadOnlyMount::new(std::env::temp_dir(), "/rust-toolchain");
+        let mount = ReadOnlyMount::new(std::env::temp_dir(), HERMETIC_RUST_TOOLCHAIN_ROOT);
         let runner = LinuxBubblewrap::with_read_only_mounts(vec![mount.clone()]).unwrap();
         assert_eq!(runner.read_only_mounts(), &[mount]);
+    }
+
+    #[test]
+    fn candidate_cannot_override_loader_or_toolchain_environment() {
+        let mut spec = base_spec(std::env::temp_dir());
+        spec.environment.insert("LD_PRELOAD".into(), "/workspace/evil.so".into());
+        assert!(matches!(
+            LinuxBubblewrap::default().run(&spec),
+            Err(SandboxError::PolicyViolation(_))
+        ));
+
+        let mut spec = base_spec(std::env::temp_dir());
+        spec.environment.insert("RUSTC".into(), "/workspace/fake-rustc".into());
+        assert!(matches!(
+            LinuxBubblewrap::default().run(&spec),
+            Err(SandboxError::PolicyViolation(_))
+        ));
+    }
+
+    #[test]
+    fn hermetic_rust_policy_pins_readonly_inputs_and_cargo_environment() {
+        let temp = std::env::temp_dir();
+        let policy = HermeticRustPolicy::new(&temp, &temp, &temp, &temp);
+        let runner = policy.runner().unwrap();
+        let targets: Vec<&Path> = runner
+            .read_only_mounts()
+            .iter()
+            .map(|mount| mount.target.as_path())
+            .collect();
+        assert!(targets.contains(&Path::new(HERMETIC_SOURCE_ROOT)));
+        assert!(targets.contains(&Path::new(HERMETIC_RUST_TOOLCHAIN_ROOT)));
+        assert!(targets.contains(&Path::new(HERMETIC_CARGO_VENDOR_ROOT)));
+        assert!(targets.contains(&Path::new(HERMETIC_CARGO_HOME_ROOT)));
+        assert_eq!(
+            runner.protected_environment().get(OsStr::new("CARGO_NET_OFFLINE")),
+            Some(&OsString::from("true"))
+        );
+        assert_eq!(
+            runner.protected_environment().get(OsStr::new("CARGO_TARGET_DIR")),
+            Some(&OsString::from("/workspace/target"))
+        );
     }
 
     #[test]
