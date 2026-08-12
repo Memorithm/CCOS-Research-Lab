@@ -110,13 +110,16 @@ impl HermeticRustInputs {
 /// Compile/test/bench a trusted candidate snapshot with Cargo while all source,
 /// verifier, toolchain, vendor and Cargo configuration inputs are immutable.
 ///
-/// `cargo_args` are appended after the mandatory `--manifest-path`, `--offline`
-/// and `--frozen` flags. Cargo's target directory is runner-pinned to
-/// `/workspace/target`; callers cannot override it through the environment.
+/// Cargo requires the command (`build`, `test`, `bench`, ...) before command
+/// options. The helper owns that ordering and always inserts the mandatory
+/// `--manifest-path`, `--offline` and `--frozen` gates immediately after the
+/// subcommand. Cargo's target directory is runner-pinned to `/workspace/target`;
+/// callers cannot override it through the environment.
 pub fn run_hermetic_cargo<I, S>(
     inputs: &HermeticRustInputs,
     build_workspace: &Path,
-    cargo_args: I,
+    subcommand: &str,
+    extra_args: I,
     timeout: Duration,
     max_memory_bytes: u64,
     max_file_size_bytes: u64,
@@ -130,17 +133,27 @@ where
             "hermetic build workspace is not a directory".into(),
         ));
     }
+    if subcommand.is_empty()
+        || !subcommand
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err(ForgeError::Evaluation(
+            "invalid hermetic Cargo subcommand".into(),
+        ));
+    }
     let runner = inputs
         .policy()
         .runner()
         .map_err(|error| ForgeError::Evaluation(format!("sandbox policy refused: {error}")))?;
     let mut args = vec![
+        subcommand.into(),
         "--manifest-path".into(),
         format!("{HERMETIC_SOURCE_ROOT}/Cargo.toml").into(),
         "--offline".into(),
         "--frozen".into(),
     ];
-    args.extend(cargo_args.into_iter().map(Into::into));
+    args.extend(extra_args.into_iter().map(Into::into));
     let spec = SandboxSpec {
         program: HermeticRustPolicy::cargo_program(),
         args,
@@ -262,5 +275,22 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{error}").contains("frozen artifact does not exist"));
+    }
+
+    #[test]
+    fn invalid_cargo_subcommand_is_rejected_before_policy_setup() {
+        let inputs = HermeticRustInputs::new("/src", "/toolchain", "/vendor", "/cargo-home");
+        let workspace = std::env::temp_dir();
+        let error = run_hermetic_cargo(
+            &inputs,
+            &workspace,
+            "build --release",
+            std::iter::empty::<&str>(),
+            Duration::from_secs(1),
+            1024,
+            1024,
+        )
+        .unwrap_err();
+        assert!(format!("{error}").contains("invalid hermetic Cargo subcommand"));
     }
 }
