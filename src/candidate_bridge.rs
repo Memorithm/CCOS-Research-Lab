@@ -1,4 +1,4 @@
-//! CCOS-side mirror for the Research-Lab candidate protocol.
+//! CCOS-side mirror and closed pipeline for the Research-Lab candidate protocol.
 //!
 //! RSI/Forge owns the portable candidate/evaluation/adoption receipts. This
 //! module keeps the dependency direction CCOS -> RSI and mirrors only validated,
@@ -10,7 +10,8 @@ use std::collections::BTreeSet;
 use crate::event_log::{EventLog, EventPayload, EventType};
 use rsi::{
     validate_adoption, validate_candidate, validate_evaluation, AdoptionReceipt,
-    CandidateEnvelope, CandidateProtocolError, EvaluationReceipt,
+    CandidateEnvelope, CandidateProtocolError, ChampionChallengerPolicy, EvaluationReceipt,
+    SealedCandidateEvaluator,
 };
 
 #[derive(Debug)]
@@ -33,6 +34,41 @@ impl CcosCandidateAudit {
 
     pub fn event_log(&self) -> &EventLog {
         &self.log
+    }
+
+    /// Execute the complete candidate -> sealed evaluation audit transition.
+    /// The candidate is committed to the primary log before execution. A
+    /// protocol or infrastructure failure therefore remains observable without
+    /// ever fabricating an evaluation event.
+    pub fn evaluate<E: SealedCandidateEvaluator>(
+        &mut self,
+        candidate: &CandidateEnvelope,
+        evaluator: &E,
+    ) -> Result<EvaluationReceipt, CandidateProtocolError> {
+        self.record_candidate(candidate)?;
+        let receipt = evaluator.evaluate(candidate)?;
+        self.record_evaluation(candidate, &receipt)?;
+        Ok(receipt)
+    }
+
+    /// Compare a recorded challenger with a champion under the typed promotion
+    /// policy, then seal the resulting Promote/Reject decision in the same CCOS
+    /// chain. A challenger evaluation not previously audited is refused.
+    pub fn decide_champion_challenger(
+        &mut self,
+        champion: &EvaluationReceipt,
+        challenger: &EvaluationReceipt,
+        policy: &ChampionChallengerPolicy,
+        promoted_artifact_sha256: Option<String>,
+    ) -> Result<AdoptionReceipt, CandidateProtocolError> {
+        if !self.evaluations.contains(&challenger.fingerprint()) {
+            return Err(CandidateProtocolError::PolicyViolation(
+                "challenger evaluation must be audited before adoption".into(),
+            ));
+        }
+        let adoption = policy.decide(champion, challenger, promoted_artifact_sha256)?;
+        self.record_adoption(challenger, &adoption)?;
+        Ok(adoption)
     }
 
     pub fn record_candidate(
@@ -113,11 +149,11 @@ mod tests {
         ObjectiveValue, CANDIDATE_PROTOCOL_VERSION,
     };
 
-    fn candidate() -> CandidateEnvelope {
+    fn candidate_with_source(source: &[u8]) -> CandidateEnvelope {
         CandidateEnvelope::from_source(
             CandidateOrigin::Forge,
             "simd_gemm",
-            b"fn kernel() {}",
+            source,
             Some("7".into()),
             None,
             Some("a".repeat(64)),
@@ -126,7 +162,11 @@ mod tests {
         .unwrap()
     }
 
-    fn evaluation(candidate: &CandidateEnvelope) -> EvaluationReceipt {
+    fn candidate() -> CandidateEnvelope {
+        candidate_with_source(b"fn kernel() {}")
+    }
+
+    fn evaluation_with_latency(candidate: &CandidateEnvelope, latency: f64) -> EvaluationReceipt {
         EvaluationReceipt {
             schema_version: CANDIDATE_PROTOCOL_VERSION,
             candidate_fingerprint: candidate.fingerprint(),
@@ -136,13 +176,17 @@ mod tests {
             verifier_sha256: Some("c".repeat(64)),
             trial_seed: candidate.trial_seed,
             status: EvaluationStatus::Succeeded,
-            objectives: vec![ObjectiveValue::new("latency_ns", 10.0, true).unwrap()],
+            objectives: vec![ObjectiveValue::new("latency_ns", latency, true).unwrap()],
             stdout_sha256: "d".repeat(64),
             stderr_sha256: "e".repeat(64),
             timed_out: false,
             output_truncated: false,
             failure_reason: None,
         }
+    }
+
+    fn evaluation(candidate: &CandidateEnvelope) -> EvaluationReceipt {
+        evaluation_with_latency(candidate, 10.0)
     }
 
     #[test]
@@ -212,5 +256,47 @@ mod tests {
         let mut audit = CcosCandidateAudit::new("candidate-test");
         assert!(audit.record_candidate(&candidate).is_err());
         assert!(audit.event_log().events.is_empty());
+    }
+
+    struct StaticEvaluator {
+        receipt: EvaluationReceipt,
+    }
+
+    impl SealedCandidateEvaluator for StaticEvaluator {
+        fn evaluate(
+            &self,
+            _candidate: &CandidateEnvelope,
+        ) -> Result<EvaluationReceipt, CandidateProtocolError> {
+            Ok(self.receipt.clone())
+        }
+    }
+
+    #[test]
+    fn closed_pipeline_evaluates_then_promotes_audited_challenger() {
+        let champion_candidate = candidate_with_source(b"champion");
+        let challenger_candidate = candidate_with_source(b"challenger");
+        let champion = evaluation_with_latency(&champion_candidate, 100.0);
+        let challenger = evaluation_with_latency(&challenger_candidate, 80.0);
+        let evaluator = StaticEvaluator {
+            receipt: challenger.clone(),
+        };
+        let policy = ChampionChallengerPolicy::new("cc-v1", 0.10, 0.0).unwrap();
+
+        let mut audit = CcosCandidateAudit::new("pipeline-test");
+        let measured = audit
+            .evaluate(&challenger_candidate, &evaluator)
+            .unwrap();
+        let adoption = audit
+            .decide_champion_challenger(
+                &champion,
+                &measured,
+                &policy,
+                Some("f".repeat(64)),
+            )
+            .unwrap();
+
+        assert_eq!(adoption.decision, AdoptionDecision::Promote);
+        assert_eq!(audit.event_log().events.len(), 3);
+        assert!(audit.event_log().verify_integrity().valid);
     }
 }
