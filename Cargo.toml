@@ -210,11 +210,11 @@ rsi = ["dep:rsi"]
 # Machine — editable-file allowlist + `GuardLayer` + air-gapped
 # `cargo --offline --frozen` evaluator + hash-chain-audited `promote_to_live`.
 # This is a **REPLAY-RELAX**: the evaluator runs a real `cargo` subprocess, so a
-# DGM step is not bit-replayable. This tier also enables `rsi/forge`, exposing
-# the canonical Forge `Candidate` → `CandidateEnvelope` adapter only on the
-# generated-code execution path; deterministic `rsi`/`pro-default` stay Forge-free.
-# Runtime-gated by `Feature::RsiDgm` via `DgmAccess::unlock`.
-rsi-dgm = ["rsi", "rsi/forge"]
+# DGM step is not bit-replayable (the proposer/evaluator stay deterministic; the
+# relax is the build/test subprocess). Runtime-gated by `Feature::RsiDgm` via
+# `DgmAccess::unlock`. `crates/ccos-rsi`'s `dgm` module is unconditional (no
+# `ccos-rsi/dgm` sub-feature), so this simply implies `rsi`.
+rsi-dgm = ["rsi"]
 # **RSI full** (plan P3): RSI + an LLM proposer backend (Ollama, local). This is a
 # **REPLAY-RELAX**: an LLM proposer is non-replayable by construction (the relax
 # is visible in the proposer type, never the default). Pulls `ccos-rsi/llm-ollama`.
