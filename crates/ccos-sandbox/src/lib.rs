@@ -1,8 +1,10 @@
 //! Unified fail-closed Linux execution boundary for generated code.
 //!
 //! The runner deliberately has no direct-execution fallback: if Bubblewrap is
-//! unavailable, evaluation is refused.  Callers supply an executable and
-//! structured arguments; shell parsing is never involved.
+//! unavailable, evaluation is refused. Callers supply an executable and
+//! structured arguments; shell parsing is never involved. Declared POSIX
+//! resource ceilings are applied with `prlimit(1)` *inside* the Bubblewrap
+//! boundary; requesting a ceiling when `prlimit` is unavailable fails closed.
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
@@ -82,6 +84,48 @@ impl LinuxBubblewrap {
             .map(Path::to_path_buf)
             .ok_or(SandboxError::Unavailable)
     }
+
+    fn prlimit_executable() -> Option<PathBuf> {
+        ["/usr/bin/prlimit", "/bin/prlimit"]
+            .iter()
+            .map(Path::new)
+            .find(|p| p.is_file())
+            .map(Path::to_path_buf)
+    }
+
+    fn resource_limit_args(spec: &SandboxSpec) -> Result<Option<(PathBuf, Vec<OsString>)>, SandboxError> {
+        let requested = spec.max_memory_bytes.is_some()
+            || spec.max_file_size_bytes.is_some()
+            || spec.max_processes.is_some()
+            || spec.cpu_time_limit.is_some();
+        if !requested {
+            return Ok(None);
+        }
+
+        let prlimit = Self::prlimit_executable().ok_or_else(|| {
+            SandboxError::PolicyViolation(
+                "resource limits requested but prlimit is unavailable".into(),
+            )
+        })?;
+        let mut args = Vec::new();
+        if let Some(bytes) = spec.max_memory_bytes {
+            args.push(format!("--as={bytes}:{bytes}").into());
+        }
+        if let Some(bytes) = spec.max_file_size_bytes {
+            args.push(format!("--fsize={bytes}:{bytes}").into());
+        }
+        if let Some(processes) = spec.max_processes {
+            args.push(format!("--nproc={processes}:{processes}").into());
+        }
+        if let Some(duration) = spec.cpu_time_limit {
+            let seconds = duration
+                .as_secs()
+                .saturating_add(u64::from(duration.subsec_nanos() != 0))
+                .max(1);
+            args.push(format!("--cpu={seconds}:{seconds}").into());
+        }
+        Ok(Some((prlimit, args)))
+    }
 }
 
 impl SandboxRunner for LinuxBubblewrap {
@@ -91,7 +135,14 @@ impl SandboxRunner for LinuxBubblewrap {
                 "workspace paths must be directories".into(),
             ));
         }
+        if spec.writable_paths.is_empty() {
+            return Err(SandboxError::PolicyViolation(
+                "at least one writable workspace path is required".into(),
+            ));
+        }
+
         let bwrap = Self::executable()?;
+        let resource_limits = Self::resource_limit_args(spec)?;
         let mut cmd = Command::new(bwrap);
         cmd.env_clear().args([
             "--die-with-parent",
@@ -148,8 +199,11 @@ impl SandboxRunner for LinuxBubblewrap {
         for (k, v) in &spec.environment {
             cmd.arg("--setenv").arg(k).arg(v);
         }
-        cmd.arg("--")
-            .arg(&spec.program)
+        cmd.arg("--");
+        if let Some((prlimit, limit_args)) = resource_limits {
+            cmd.arg(prlimit).args(limit_args).arg("--");
+        }
+        cmd.arg(&spec.program)
             .args(&spec.args)
             .current_dir(&spec.cwd)
             .stdin(Stdio::null())
@@ -242,10 +296,9 @@ pub fn run(spec: &SandboxSpec) -> Result<SandboxOutput, SandboxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn unavailable_is_fail_closed() {
-        let cwd = std::env::temp_dir();
-        let spec = SandboxSpec {
+
+    fn base_spec(cwd: PathBuf) -> SandboxSpec {
+        SandboxSpec {
             program: "/bin/echo".into(),
             args: vec!["ok".into()],
             cwd: cwd.clone(),
@@ -259,11 +312,54 @@ mod tests {
             max_processes: None,
             cpu_time_limit: None,
             network: NetworkPolicy::Deny,
-        };
+        }
+    }
+
+    #[test]
+    fn unavailable_is_fail_closed() {
+        let spec = base_spec(std::env::temp_dir());
         match run(&spec) {
             Ok(out) => assert_eq!(out.status, SandboxExit::Success),
             Err(SandboxError::Unavailable) => {}
             Err(e) => panic!("unexpected sandbox error: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_writable_workspace_is_rejected() {
+        let mut spec = base_spec(std::env::temp_dir());
+        spec.writable_paths.clear();
+        assert!(matches!(
+            LinuxBubblewrap.run(&spec),
+            Err(SandboxError::PolicyViolation(_))
+        ));
+    }
+
+    #[test]
+    fn requested_limits_are_translated_without_shell_parsing() {
+        let mut spec = base_spec(std::env::temp_dir());
+        spec.max_memory_bytes = Some(64 * 1024 * 1024);
+        spec.max_file_size_bytes = Some(1024 * 1024);
+        spec.max_processes = Some(8);
+        spec.cpu_time_limit = Some(Duration::from_millis(1500));
+
+        match LinuxBubblewrap::resource_limit_args(&spec) {
+            Ok(Some((_program, args))) => {
+                let args: Vec<String> = args
+                    .iter()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect();
+                assert!(args.contains(&"--as=67108864:67108864".to_string()));
+                assert!(args.contains(&"--fsize=1048576:1048576".to_string()));
+                assert!(args.contains(&"--nproc=8:8".to_string()));
+                assert!(args.contains(&"--cpu=2:2".to_string()));
+            }
+            Ok(None) => panic!("limits unexpectedly omitted"),
+            Err(SandboxError::PolicyViolation(_)) => {
+                // Minimal platforms may legitimately lack prlimit. The runtime
+                // behavior is fail-closed in that case.
+            }
+            Err(error) => panic!("unexpected error: {error:?}"),
         }
     }
 }
