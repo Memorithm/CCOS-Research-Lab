@@ -69,7 +69,7 @@ impl WasmSynthesis {
     fn run_once(engine: &Engine, module: &Module, input: i64) -> Result<i64, String> {
         let linker = Linker::<()>::new(engine);
         let mut store = Store::new(engine, ());
-        store.set_fuel(FUEL_PER_CALL).map_err(|e| e.to_string())?;
+        store.add_fuel(FUEL_PER_CALL).map_err(|e| e.to_string())?;
         let instance = linker
             .instantiate(&mut store, module)
             .map_err(|e| format!("instanciation (imports interdits): {e}"))?
