@@ -150,7 +150,7 @@ fn tool_specs() -> Value {
         },
         {
             "name": "ccos_retrieve",
-            "description": "Retrieve the original (uncompressed) content of a previously-compressed context item. Pass the `ccr_ref` string returned alongside a compressed recall / context resource. Returns the full original text so the LLM can drill into a skeleton or summary CCOS emitted in its place.",
+            "description": "Retrieve the original (uncompressed) content of a previously-compressed item. Pass the `ccr_ref` string returned alongside a compressed recall / context resource. Returns the full original text so the LLM can drill into a skeleton or summary CCOS emitted in its place.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -263,21 +263,22 @@ fn tool_specs() -> Value {
             if t["name"] == "recall" {
                 t["inputSchema"]["properties"]["alpha"] = json!({
                     "type": "number",
-                    "description": "(Pro 'octa-semantic' only) miscoverage level in (0,1) for the feedback-calibrated anchor gate (default 0.1)"
+                    "description": "(Pro 'octa-semantic' only) miscoverage level in (0,1) for the independently calibrated conformal anchor gate (default 0.1)"
                 });
             }
         }
         list.push(json!({
             "name": "octa_feedback",
-            "description": "Label the last octa-semantic recall (or an explicit query/uri/score triple) as relevant or not. The labels calibrate the conformal anchor gate future octa-semantic recalls run through — the explicit relevance-feedback channel of the Pro semantic tier. Stateful: served by the stdio loop; the stateless embedding API refuses it visibly.",
+            "description": "Label an octa-semantic observation. Ordinary labels of returned candidates use source='retrieved_candidate' (the default): they calibrate ranking/probability but cannot certify recall coverage. Independently selected evaluator/benchmark targets use source='external_ground_truth' with an explicit query/uri/score triple; only those labels can activate the conformal anchor gate. Stateful: served by the stdio loop; the stateless embedding API refuses it visibly.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "relevant": {"type": "boolean", "description": "was the resolved anchor actually useful for the query?"},
+                    "relevant": {"type": "boolean", "description": "was this memory relevant for the query?"},
+                    "source": {"type": "string", "enum": ["retrieved_candidate", "external_ground_truth"], "description": "label provenance (default retrieved_candidate); external_ground_truth requires explicit query/uri/score and independent target selection"},
                     "query": {"type": "string", "description": "label an explicit observation instead of the last recall (requires uri and score too)"},
-                    "uri": {"type": "string", "description": "anchor node uri of the explicit observation"},
-                    "score": {"type": "number", "description": "similarity score in (0,1] the anchor was returned with"},
-                    "alpha": {"type": "number", "description": "miscoverage level for the floor reported back (default 0.1)"}
+                    "uri": {"type": "string", "description": "anchor/target node uri of the explicit observation"},
+                    "score": {"type": "number", "description": "similarity score in (0,1] for the observation"},
+                    "alpha": {"type": "number", "description": "miscoverage level for the independently calibrated floor reported back (default 0.1)"}
                 },
                 "required": ["relevant"]
             }
@@ -493,13 +494,13 @@ fn structured(text: String, structured_content: Value) -> Value {
 /// the documented follow-up). On the community tier the refusal is a visible tool
 /// result, never a silent downgrade — the free strategies keep working.
 ///
-/// With a [`ServerState`] whose `octa_feedback` log supports the asked `alpha`
-/// (default 0.1), the resolved anchor also runs through the **conformal gate**: score
-/// at or above the certified floor → `"octa-semantic-certified"`; below → the anchor
-/// is refused and the window comes from the lexical fallback,
-/// `"octa-semantic-below-floor-fallback-task"`. The response carries the resolution
-/// (`anchor`) and the gate's inputs (`calibration`) alongside the window, so the
-/// client can label the anchor via `octa_feedback` and see the calibration progress.
+/// With a [`ServerState`] whose independently sourced ground-truth feedback supports
+/// the asked `alpha` (default 0.1), the resolved anchor also runs through the **conformal
+/// gate**: score at or above the certified floor → `"octa-semantic-certified"`; below →
+/// the anchor is refused and the window comes from the lexical fallback,
+/// `"octa-semantic-below-floor-fallback-task"`. Candidate-conditioned feedback is kept
+/// for probability calibration but cannot activate this certificate. The response carries
+/// the resolution (`anchor`) and the gate's inputs (`calibration`) alongside the window.
 #[cfg(feature = "octasoma")]
 fn octa_semantic_recall(
     session: &mut AgentSession,
@@ -537,9 +538,9 @@ fn octa_semantic_recall(
     };
     let idx = access.sharded_index_from_graph(HashEmbedder::new(DIM), session.memory().graph());
 
-    // Conformal anchor gate, calibrated on the server-held feedback log (see
-    // `SemanticFeedback::certified_score_floor`). Stateless entry / empty log → no
-    // floor → baseline behavior, and the response's `calibration` block says so.
+    // Conformal anchor gate, calibrated only on independently sourced ground truth (see
+    // `SemanticFeedback::certified_score_floor`). Stateless entry / empty independent
+    // log → no floor → baseline behavior, and the response says so.
     let floor = state
         .as_ref()
         .and_then(|st| st.octa.feedback.certified_score_floor(alpha));
@@ -586,11 +587,13 @@ fn octa_semantic_recall(
 }
 
 /// The Pro **`octa_feedback`** tool — the explicit relevance channel for the
-/// octa-semantic tier: the agent loop reports whether a resolved anchor was actually
-/// useful, and the labels calibrate the conformal anchor gate the next recalls run
-/// through (octasoma's design decision, CCOS side). Stateful by nature: the label log
-/// lives in [`ServerState`] with the serve loop — the stateless [`handle`] refuses the
-/// call visibly rather than dropping labels silently.
+/// octa-semantic tier. Candidate-conditioned labels (the default) describe whether a
+/// returned anchor helped and are useful for probability/ranking calibration, but they
+/// never certify recall coverage. `source = "external_ground_truth"` is reserved for a
+/// target chosen independently of retrieval (held-out evaluator / authorised benchmark),
+/// must be supplied as an explicit `(query, uri, score)` triple, and is the only source
+/// allowed to calibrate the conformal gate. Stateful by nature: the label log lives in
+/// [`ServerState`] with the serve loop — the stateless [`handle`] refuses the call visibly.
 #[cfg(feature = "octasoma")]
 fn octa_feedback_tool(
     session: &mut AgentSession,
@@ -623,8 +626,20 @@ fn octa_feedback_tool(
     if !(alpha > 0.0 && alpha < 1.0) {
         return Err((-32602, "octa_feedback 'alpha' must be in (0,1)".into()));
     }
-    // Label an explicit `(query, uri, score)` triple, or — the common loop — the last
-    // octa-semantic resolution this server performed.
+    let source = args
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or("retrieved_candidate");
+    if !matches!(source, "retrieved_candidate" | "external_ground_truth") {
+        return Err((
+            -32602,
+            "octa_feedback 'source' must be 'retrieved_candidate' or 'external_ground_truth'"
+                .into(),
+        ));
+    }
+
+    // Label an explicit `(query, uri, score)` triple, or — for ordinary candidate
+    // feedback only — the last octa-semantic resolution this server performed.
     let explicit = match (
         args.get("query").and_then(Value::as_str),
         args.get("uri").and_then(Value::as_str),
@@ -641,6 +656,14 @@ fn octa_feedback_tool(
             ))
         }
     };
+    if source == "external_ground_truth" && explicit.is_none() {
+        return Err((
+            -32602,
+            "external_ground_truth requires an explicit query/uri/score triple; the last \
+             retrieved candidate is selection-conditioned and cannot certify coverage"
+                .into(),
+        ));
+    }
     let Some((query, uri, score)) = explicit.or_else(|| st.octa.last.clone()) else {
         return Ok(json!({
             "content": [{ "type": "text",
@@ -653,9 +676,22 @@ fn octa_feedback_tool(
     if !(score > 0.0 && score <= 1.0) {
         return Err((-32602, "octa_feedback 'score' must be in (0,1]".into()));
     }
-    st.octa.feedback.record(&query, &uri, score, relevant);
+    match source {
+        "retrieved_candidate" => st.octa.feedback.record(&query, &uri, score, relevant),
+        "external_ground_truth" => st
+            .octa
+            .feedback
+            .record_ground_truth(&query, &uri, score, relevant),
+        _ => unreachable!("source validated above"),
+    }
     let payload = json!({
-        "recorded": { "query": query, "uri": uri, "score": score, "relevant": relevant },
+        "recorded": {
+            "query": query,
+            "uri": uri,
+            "score": score,
+            "relevant": relevant,
+            "source": source
+        },
         "labels": st.octa.feedback.len(),
         "relevant_labels": st.octa.feedback.relevant_count(),
         "calibration": { "alpha": alpha, "floor": st.octa.feedback.certified_score_floor(alpha) }
@@ -1081,8 +1117,8 @@ pub struct ServerState {
 struct OctaFeedbackState {
     feedback: crate::octa_index::SemanticFeedback,
     /// `(query, anchor_uri, score)` of the most recent octa-semantic resolution —
-    /// recorded even when the anchor was refused by the floor, so a mistaken
-    /// rejection can be labelled relevant and widen the gate back.
+    /// recorded even when the anchor was refused by the floor. A bare feedback call
+    /// labels this retrieved candidate; it is never promoted to external ground truth.
     last: Option<(String, String, f64)>,
 }
 
@@ -1387,10 +1423,10 @@ mod tests {
             .contains("octa-semantic"));
     }
 
-    /// The explicit feedback channel over MCP: labels accumulate in the server-held
-    /// state, certify a conformal floor, and the floor gates the next octa-semantic
-    /// anchors — certified when the anchor clears it, visible lexical fallback when
-    /// it does not.
+    /// The explicit feedback channel over MCP: independently selected ground-truth
+    /// labels accumulate in server-held state, certify a conformal floor, and the floor
+    /// gates the next octa-semantic anchors. Candidate-conditioned labels remain useful
+    /// calibration evidence but cannot create the certificate.
     #[cfg(feature = "octasoma")]
     #[test]
     fn octa_feedback_calibrates_the_conformal_anchor_gate() {
@@ -1435,13 +1471,14 @@ mod tests {
         assert_eq!(p["window"]["strategy"], "octa-semantic");
         assert_eq!(p["calibration"]["floor"], Value::Null);
         assert_eq!(p["calibration"]["labels"], 0);
-        // The resolution is reported so the client can label it: an exact-content
-        // query anchors at distance 0 → score 1.0.
+        // The resolution is reported so an independent evaluator can score the target.
         assert!(p["anchor"]["uri"].as_str().unwrap().contains("db.rs"));
         assert!((p["anchor"]["score"].as_f64().unwrap() - 1.0).abs() < 1e-12);
+        let anchor_uri = p["anchor"]["uri"].as_str().unwrap().to_string();
+        let anchor_score = p["anchor"]["score"].as_f64().unwrap();
 
-        // Three positive labels on the last resolution (score 1.0) → nonconformities
-        // all 0 → the floor certifies at 1.0 for alpha = 0.25 (k = ⌈4·0.75⌉ = 3 ≤ n).
+        // Three independent positive targets at score 1.0 → nonconformities all 0 →
+        // the floor certifies at 1.0 for alpha = 0.25 (k = ⌈4·0.75⌉ = 3 ≤ n).
         for id in 2..5 {
             let r = handle_with(
                 &mut s,
@@ -1450,13 +1487,21 @@ mod tests {
                     id,
                     "tools/call",
                     json!({ "name": "octa_feedback",
-                        "arguments": { "relevant": true, "alpha": 0.25 } }),
+                        "arguments": {
+                            "relevant": true,
+                            "alpha": 0.25,
+                            "source": "external_ground_truth",
+                            "query": format!("held-out-{id}"),
+                            "uri": anchor_uri.clone(),
+                            "score": anchor_score
+                        } }),
                 ),
             )
             .unwrap();
             let text = r["result"]["content"][0]["text"].as_str().unwrap();
             let p: Value = serde_json::from_str(text).unwrap();
             assert_eq!(p["labels"], id - 1);
+            assert_eq!(p["recorded"]["source"], "external_ground_truth");
         }
 
         // Anchor at the floor → certified.
@@ -1473,10 +1518,10 @@ mod tests {
             "octa-semantic-below-floor-fallback-task"
         );
 
-        // The catalogue advertises the feedback surface in this build.
+        // The catalogue advertises the feedback provenance surface in this build.
         let tools = handle(&mut s, &req(7, "tools/list", Value::Null)).unwrap();
         let ts = tools["result"]["tools"].to_string();
-        assert!(ts.contains("octa_feedback") && ts.contains("alpha"));
+        assert!(ts.contains("octa_feedback") && ts.contains("external_ground_truth"));
     }
 
     /// `octa_feedback` never forgets silently and never downgrades silently: the
@@ -1526,6 +1571,26 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("no octa-semantic recall"));
+
+        // A claimed independent ground-truth label cannot refer implicitly to the last
+        // retrieved candidate: it must carry an explicit independently selected target.
+        let r = handle_with(
+            &mut s,
+            &mut st,
+            &req(
+                4,
+                "tools/call",
+                json!({ "name": "octa_feedback", "arguments": {
+                    "relevant": true, "source": "external_ground_truth"
+                } }),
+            ),
+        )
+        .unwrap();
+        assert_eq!(r["error"]["code"], -32602);
+        assert!(r["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("explicit query/uri/score"));
     }
 
     /// A session with the import chain api → repo → db (each depends on the next).
