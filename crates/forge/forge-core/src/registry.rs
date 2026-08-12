@@ -145,9 +145,10 @@ impl AlgorithmRegistry {
     }
 
     fn atomic_write(&self, destination: &Path, payload: &[u8]) -> Result<()> {
-        let _guard = self.write_lock.lock().map_err(|_| {
-            ForgeError::Evaluation("Verrou du registre Forge empoisonné".into())
-        })?;
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| ForgeError::Evaluation("Verrou du registre Forge empoisonné".into()))?;
         let file_name = destination
             .file_name()
             .and_then(|name| name.to_str())

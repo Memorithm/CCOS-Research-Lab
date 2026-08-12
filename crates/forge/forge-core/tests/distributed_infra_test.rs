@@ -211,15 +211,8 @@ fn test_distributed_evolution_under_stress() {
     };
     let failure_sink = Mutex::new(Vec::new());
 
-    let individuals: Vec<Individual<StubCandidate>> = evaluate_parallel_distributed(
-        &population,
-        &workers,
-        &trial,
-        None,
-        None,
-        0,
-        &failure_sink,
-    );
+    let individuals: Vec<Individual<StubCandidate>> =
+        evaluate_parallel_distributed(&population, &workers, &trial, None, None, 0, &failure_sink);
 
     assert_eq!(
         individuals.len(),

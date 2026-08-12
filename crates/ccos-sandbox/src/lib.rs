@@ -1,17 +1,30 @@
 //! Unified fail-closed Linux execution boundary for generated code.
 //!
 //! The runner deliberately has no direct-execution fallback: if Bubblewrap is
-//! unavailable, evaluation is refused.  Callers supply an executable and
-//! structured arguments; shell parsing is never involved.
+//! unavailable, evaluation is refused. Callers supply an executable and
+//! structured arguments; shell parsing is never involved. Declared POSIX
+//! resource ceilings are applied with `prlimit(1)` *inside* the Bubblewrap
+//! boundary; requesting a ceiling when `prlimit` is unavailable fails closed.
+//!
+//! Runner-owned read-only mounts separate trusted immutable inputs (candidate
+//! source snapshot, verifier, toolchain, Cargo vendor tree) from the single
+//! writable build workspace. Candidate-controlled specifications cannot add
+//! mounts or override protected process-environment variables.
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+
+pub const SANDBOX_WORKSPACE: &str = "/workspace";
+pub const HERMETIC_SOURCE_ROOT: &str = "/candidate-src";
+pub const HERMETIC_RUST_TOOLCHAIN_ROOT: &str = "/rust-toolchain";
+pub const HERMETIC_CARGO_VENDOR_ROOT: &str = "/cargo-vendor";
+pub const HERMETIC_CARGO_HOME_ROOT: &str = "/cargo-home";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NetworkPolicy {
@@ -19,11 +32,104 @@ pub enum NetworkPolicy {
     LoopbackOnly,
 }
 
+/// Trusted immutable host input exposed by the *runner policy*, never by the
+/// candidate harness itself.
+///
+/// `target` is restricted to one top-level sandbox path such as
+/// `/rust-toolchain` or `/cargo-vendor`, preventing a mount from shadowing
+/// `/workspace` or one of the base system/security mounts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReadOnlyMount {
+    pub source: PathBuf,
+    pub target: PathBuf,
+}
+
+impl ReadOnlyMount {
+    pub fn new(source: impl Into<PathBuf>, target: impl Into<PathBuf>) -> Self {
+        Self {
+            source: source.into(),
+            target: target.into(),
+        }
+    }
+}
+
+/// Infrastructure-owned inputs for a Cargo/Rust evaluation.
+///
+/// The source root must already contain the trusted manifest/verifier snapshot
+/// and any lock/config files required by the evaluation. All four inputs are
+/// mounted read-only. Only `/workspace` remains writable for Cargo target files
+/// and runtime scratch data.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HermeticRustPolicy {
+    pub source_root: PathBuf,
+    pub rust_toolchain_root: PathBuf,
+    pub cargo_vendor_root: PathBuf,
+    pub cargo_home_root: PathBuf,
+}
+
+impl HermeticRustPolicy {
+    pub fn new(
+        source_root: impl Into<PathBuf>,
+        rust_toolchain_root: impl Into<PathBuf>,
+        cargo_vendor_root: impl Into<PathBuf>,
+        cargo_home_root: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            source_root: source_root.into(),
+            rust_toolchain_root: rust_toolchain_root.into(),
+            cargo_vendor_root: cargo_vendor_root.into(),
+            cargo_home_root: cargo_home_root.into(),
+        }
+    }
+
+    pub fn cargo_program() -> PathBuf {
+        PathBuf::from(HERMETIC_RUST_TOOLCHAIN_ROOT).join("bin/cargo")
+    }
+
+    pub fn rustc_program() -> PathBuf {
+        PathBuf::from(HERMETIC_RUST_TOOLCHAIN_ROOT).join("bin/rustc")
+    }
+
+    pub fn candidate_manifest() -> PathBuf {
+        PathBuf::from(HERMETIC_SOURCE_ROOT).join("Cargo.toml")
+    }
+
+    fn runner_mounts(&self) -> Vec<ReadOnlyMount> {
+        vec![
+            ReadOnlyMount::new(&self.source_root, HERMETIC_SOURCE_ROOT),
+            ReadOnlyMount::new(&self.rust_toolchain_root, HERMETIC_RUST_TOOLCHAIN_ROOT),
+            ReadOnlyMount::new(&self.cargo_vendor_root, HERMETIC_CARGO_VENDOR_ROOT),
+            ReadOnlyMount::new(&self.cargo_home_root, HERMETIC_CARGO_HOME_ROOT),
+        ]
+    }
+
+    fn protected_environment(&self) -> BTreeMap<OsString, OsString> {
+        let mut environment = BTreeMap::new();
+        environment.insert(
+            "PATH".into(),
+            format!("{HERMETIC_RUST_TOOLCHAIN_ROOT}/bin:/usr/bin:/bin").into(),
+        );
+        environment.insert("CARGO_HOME".into(), HERMETIC_CARGO_HOME_ROOT.into());
+        environment.insert("CARGO_NET_OFFLINE".into(), "true".into());
+        environment.insert("CARGO_TARGET_DIR".into(), "/workspace/target".into());
+        environment.insert("CARGO_INCREMENTAL".into(), "0".into());
+        environment.insert("RUSTC".into(), Self::rustc_program().into_os_string());
+        environment.insert("RUST_BACKTRACE".into(), "0".into());
+        environment.insert("CARGO_TERM_COLOR".into(), "never".into());
+        environment
+    }
+
+    pub fn runner(&self) -> Result<LinuxBubblewrap, SandboxError> {
+        LinuxBubblewrap::with_policy(self.runner_mounts(), self.protected_environment())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SandboxSpec {
     pub program: PathBuf,
     pub args: Vec<OsString>,
     pub cwd: PathBuf,
+    /// Exactly one writable host workspace is exposed as `/workspace`.
     pub writable_paths: Vec<PathBuf>,
     pub environment: BTreeMap<OsString, OsString>,
     pub timeout: Duration,
@@ -70,10 +176,47 @@ pub trait SandboxRunner {
     fn run(&self, spec: &SandboxSpec) -> Result<SandboxOutput, SandboxError>;
 }
 
-#[derive(Default)]
-pub struct LinuxBubblewrap;
+#[derive(Clone, Debug, Default)]
+pub struct LinuxBubblewrap {
+    read_only_mounts: Vec<ReadOnlyMount>,
+    protected_environment: BTreeMap<OsString, OsString>,
+}
 
 impl LinuxBubblewrap {
+    /// Construct an infrastructure runner with explicit immutable host inputs.
+    /// Candidate code and candidate harnesses cannot alter this list.
+    pub fn with_read_only_mounts(
+        read_only_mounts: Vec<ReadOnlyMount>,
+    ) -> Result<Self, SandboxError> {
+        Self::with_policy(read_only_mounts, BTreeMap::new())
+    }
+
+    /// Construct a runner policy with immutable mounts and environment pins.
+    /// Protected environment keys cannot be supplied by the candidate spec.
+    pub fn with_policy(
+        read_only_mounts: Vec<ReadOnlyMount>,
+        protected_environment: BTreeMap<OsString, OsString>,
+    ) -> Result<Self, SandboxError> {
+        for mount in &read_only_mounts {
+            Self::validate_mount(mount)?;
+        }
+        for key in protected_environment.keys() {
+            Self::validate_environment_key(key)?;
+        }
+        Ok(Self {
+            read_only_mounts,
+            protected_environment,
+        })
+    }
+
+    pub fn read_only_mounts(&self) -> &[ReadOnlyMount] {
+        &self.read_only_mounts
+    }
+
+    pub fn protected_environment(&self) -> &BTreeMap<OsString, OsString> {
+        &self.protected_environment
+    }
+
     fn executable() -> Result<PathBuf, SandboxError> {
         ["/usr/bin/bwrap", "/bin/bwrap"]
             .iter()
@@ -82,16 +225,178 @@ impl LinuxBubblewrap {
             .map(Path::to_path_buf)
             .ok_or(SandboxError::Unavailable)
     }
+
+    fn prlimit_executable() -> Option<PathBuf> {
+        ["/usr/bin/prlimit", "/bin/prlimit"]
+            .iter()
+            .map(Path::new)
+            .find(|p| p.is_file())
+            .map(Path::to_path_buf)
+    }
+
+    fn resource_limit_args(
+        spec: &SandboxSpec,
+    ) -> Result<Option<(PathBuf, Vec<OsString>)>, SandboxError> {
+        let requested = spec.max_memory_bytes.is_some()
+            || spec.max_file_size_bytes.is_some()
+            || spec.max_processes.is_some()
+            || spec.cpu_time_limit.is_some();
+        if !requested {
+            return Ok(None);
+        }
+
+        let prlimit = Self::prlimit_executable().ok_or_else(|| {
+            SandboxError::PolicyViolation(
+                "resource limits requested but prlimit is unavailable".into(),
+            )
+        })?;
+        let mut args = Vec::new();
+        if let Some(bytes) = spec.max_memory_bytes {
+            args.push(format!("--as={bytes}:{bytes}").into());
+        }
+        if let Some(bytes) = spec.max_file_size_bytes {
+            args.push(format!("--fsize={bytes}:{bytes}").into());
+        }
+        if let Some(processes) = spec.max_processes {
+            args.push(format!("--nproc={processes}:{processes}").into());
+        }
+        if let Some(duration) = spec.cpu_time_limit {
+            let seconds = duration
+                .as_secs()
+                .saturating_add(u64::from(duration.subsec_nanos() != 0))
+                .max(1);
+            args.push(format!("--cpu={seconds}:{seconds}").into());
+        }
+        Ok(Some((prlimit, args)))
+    }
+
+    fn validate_mount(mount: &ReadOnlyMount) -> Result<(), SandboxError> {
+        if !mount.source.exists() {
+            return Err(SandboxError::PolicyViolation(format!(
+                "read-only mount source does not exist: {}",
+                mount.source.display()
+            )));
+        }
+        if !mount.target.is_absolute() {
+            return Err(SandboxError::PolicyViolation(
+                "read-only mount target must be absolute".into(),
+            ));
+        }
+        let mut components = mount.target.components();
+        if components.next() != Some(std::path::Component::RootDir)
+            || !matches!(components.next(), Some(std::path::Component::Normal(_)))
+            || components.next().is_some()
+        {
+            return Err(SandboxError::PolicyViolation(
+                "read-only mount target must be one top-level sandbox path".into(),
+            ));
+        }
+        let forbidden = [
+            SANDBOX_WORKSPACE,
+            "/usr",
+            "/bin",
+            "/lib",
+            "/lib64",
+            "/proc",
+            "/dev",
+            "/tmp",
+        ];
+        if forbidden.iter().any(|path| mount.target == Path::new(path)) {
+            return Err(SandboxError::PolicyViolation(format!(
+                "read-only mount target is reserved: {}",
+                mount.target.display()
+            )));
+        }
+        Ok(())
+    }
+
+    fn is_reserved_environment_key(key: &OsStr) -> bool {
+        let key = key.to_string_lossy();
+        matches!(
+            key.as_ref(),
+            "HOME"
+                | "PATH"
+                | "LANG"
+                | "LC_ALL"
+                | "TMPDIR"
+                | "CARGO_HOME"
+                | "CARGO_NET_OFFLINE"
+                | "CARGO_TARGET_DIR"
+                | "CARGO_INCREMENTAL"
+                | "CARGO_TERM_COLOR"
+                | "RUSTC"
+                | "RUSTDOC"
+                | "RUSTUP_HOME"
+                | "RUSTUP_TOOLCHAIN"
+                | "RUSTC_WRAPPER"
+                | "RUSTC_WORKSPACE_WRAPPER"
+                | "RUST_BACKTRACE"
+                | "LD_PRELOAD"
+                | "LD_LIBRARY_PATH"
+        )
+    }
+
+    fn validate_environment_key(key: &OsStr) -> Result<(), SandboxError> {
+        if key.is_empty() || key.to_string_lossy().contains('=') {
+            return Err(SandboxError::PolicyViolation(
+                "invalid sandbox environment key".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_spec_environment(&self, spec: &SandboxSpec) -> Result<(), SandboxError> {
+        for key in spec.environment.keys() {
+            Self::validate_environment_key(key)?;
+            if Self::is_reserved_environment_key(key)
+                || self.protected_environment.contains_key(key)
+            {
+                return Err(SandboxError::PolicyViolation(format!(
+                    "candidate spec may not override protected environment key {}",
+                    key.to_string_lossy()
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl SandboxRunner for LinuxBubblewrap {
     fn run(&self, spec: &SandboxSpec) -> Result<SandboxOutput, SandboxError> {
+        if spec.network != NetworkPolicy::Deny {
+            return Err(SandboxError::PolicyViolation(
+                "LoopbackOnly is not implemented; only NetworkPolicy::Deny is supported".into(),
+            ));
+        }
         if !spec.cwd.is_dir() || spec.writable_paths.iter().any(|p| !p.is_dir()) {
             return Err(SandboxError::PolicyViolation(
                 "workspace paths must be directories".into(),
             ));
         }
+        if spec.writable_paths.len() != 1 {
+            return Err(SandboxError::PolicyViolation(
+                "exactly one writable workspace path is required".into(),
+            ));
+        }
+        let workspace = &spec.writable_paths[0];
+        let canonical_cwd = spec.cwd.canonicalize().map_err(|error| {
+            SandboxError::PolicyViolation(format!("cannot canonicalize cwd: {error}"))
+        })?;
+        let canonical_workspace = workspace.canonicalize().map_err(|error| {
+            SandboxError::PolicyViolation(format!("cannot canonicalize workspace: {error}"))
+        })?;
+        if canonical_cwd != canonical_workspace {
+            return Err(SandboxError::PolicyViolation(
+                "sandbox cwd must equal the single writable workspace".into(),
+            ));
+        }
+        for mount in &self.read_only_mounts {
+            Self::validate_mount(mount)?;
+        }
+        self.validate_spec_environment(spec)?;
+
         let bwrap = Self::executable()?;
+        let resource_limits = Self::resource_limit_args(spec)?;
         let mut cmd = Command::new(bwrap);
         cmd.env_clear().args([
             "--die-with-parent",
@@ -127,14 +432,15 @@ impl SandboxRunner for LinuxBubblewrap {
             "/dev/urandom",
             "/dev/urandom",
             "--dir",
-            "/workspace",
+            SANDBOX_WORKSPACE,
         ]);
-        for path in &spec.writable_paths {
-            cmd.args(["--bind"]).arg(path).args(["/workspace"]);
+        cmd.args(["--bind"]).arg(workspace).arg(SANDBOX_WORKSPACE);
+        for mount in &self.read_only_mounts {
+            cmd.arg("--ro-bind").arg(&mount.source).arg(&mount.target);
         }
         cmd.args([
             "--chdir",
-            "/workspace",
+            SANDBOX_WORKSPACE,
             "--setenv",
             "HOME",
             "/tmp",
@@ -144,12 +450,24 @@ impl SandboxRunner for LinuxBubblewrap {
             "--setenv",
             "LANG",
             "C",
+            "--setenv",
+            "LC_ALL",
+            "C",
+            "--setenv",
+            "TMPDIR",
+            "/tmp",
         ]);
-        for (k, v) in &spec.environment {
-            cmd.arg("--setenv").arg(k).arg(v);
+        for (key, value) in &spec.environment {
+            cmd.arg("--setenv").arg(key).arg(value);
         }
-        cmd.arg("--")
-            .arg(&spec.program)
+        for (key, value) in &self.protected_environment {
+            cmd.arg("--setenv").arg(key).arg(value);
+        }
+        cmd.arg("--");
+        if let Some((prlimit, limit_args)) = resource_limits {
+            cmd.arg(prlimit).args(limit_args).arg("--");
+        }
+        cmd.arg(&spec.program)
             .args(&spec.args)
             .current_dir(&spec.cwd)
             .stdin(Stdio::null())
@@ -172,17 +490,17 @@ impl SandboxRunner for LinuxBubblewrap {
             .take()
             .ok_or_else(|| SandboxError::Spawn("stderr".into()))?;
         let cap = (spec.max_output_bytes / 2).max(1) as usize;
-        let (tx, rx) = std::sync::mpsc::channel();
-        let tx2 = tx.clone();
+        let (stdout_tx, stdout_rx) = std::sync::mpsc::channel();
+        let (stderr_tx, stderr_rx) = std::sync::mpsc::channel();
         thread::spawn(move || {
-            let mut b = Vec::new();
-            let _ = out.take((cap + 1) as u64).read_to_end(&mut b);
-            let _ = tx.send(b);
+            let mut bytes = Vec::new();
+            let _ = out.take((cap + 1) as u64).read_to_end(&mut bytes);
+            let _ = stdout_tx.send(bytes);
         });
         thread::spawn(move || {
-            let mut b = Vec::new();
-            let _ = err.take((cap + 1) as u64).read_to_end(&mut b);
-            let _ = tx2.send(b);
+            let mut bytes = Vec::new();
+            let _ = err.take((cap + 1) as u64).read_to_end(&mut bytes);
+            let _ = stderr_tx.send(bytes);
         });
         let deadline = Instant::now() + spec.timeout;
         let mut timed = false;
@@ -205,13 +523,10 @@ impl SandboxRunner for LinuxBubblewrap {
                 Err(e) => return Err(SandboxError::Spawn(e.to_string())),
             }
         }
-        let a = rx
-            .recv_timeout(spec.termination_grace + Duration::from_secs(1))
-            .unwrap_or_default();
-        let b = rx
-            .recv_timeout(spec.termination_grace + Duration::from_secs(1))
-            .unwrap_or_default();
-        let truncated = a.len() > cap || b.len() > cap;
+        let capture_deadline = spec.termination_grace + Duration::from_secs(1);
+        let stdout = stdout_rx.recv_timeout(capture_deadline).unwrap_or_default();
+        let stderr = stderr_rx.recv_timeout(capture_deadline).unwrap_or_default();
+        let truncated = stdout.len() > cap || stderr.len() > cap;
         let status = if timed {
             SandboxExit::Signalled
         } else if child
@@ -227,8 +542,8 @@ impl SandboxRunner for LinuxBubblewrap {
         };
         Ok(SandboxOutput {
             status,
-            stdout: a.into_iter().take(cap).collect(),
-            stderr: b.into_iter().take(cap).collect(),
+            stdout: stdout.into_iter().take(cap).collect(),
+            stderr: stderr.into_iter().take(cap).collect(),
             timed_out: timed,
             output_truncated: truncated,
         })
@@ -236,16 +551,15 @@ impl SandboxRunner for LinuxBubblewrap {
 }
 
 pub fn run(spec: &SandboxSpec) -> Result<SandboxOutput, SandboxError> {
-    LinuxBubblewrap.run(spec)
+    LinuxBubblewrap::default().run(spec)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn unavailable_is_fail_closed() {
-        let cwd = std::env::temp_dir();
-        let spec = SandboxSpec {
+
+    fn base_spec(cwd: PathBuf) -> SandboxSpec {
+        SandboxSpec {
             program: "/bin/echo".into(),
             args: vec!["ok".into()],
             cwd: cwd.clone(),
@@ -259,11 +573,132 @@ mod tests {
             max_processes: None,
             cpu_time_limit: None,
             network: NetworkPolicy::Deny,
-        };
+        }
+    }
+
+    #[test]
+    fn unavailable_is_fail_closed() {
+        let spec = base_spec(std::env::temp_dir());
         match run(&spec) {
             Ok(out) => assert_eq!(out.status, SandboxExit::Success),
             Err(SandboxError::Unavailable) => {}
             Err(e) => panic!("unexpected sandbox error: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn loopback_policy_is_not_silently_treated_as_deny() {
+        let mut spec = base_spec(std::env::temp_dir());
+        spec.network = NetworkPolicy::LoopbackOnly;
+        assert!(matches!(
+            LinuxBubblewrap::default().run(&spec),
+            Err(SandboxError::PolicyViolation(_))
+        ));
+    }
+
+    #[test]
+    fn writable_workspace_is_unambiguous() {
+        let mut spec = base_spec(std::env::temp_dir());
+        spec.writable_paths.clear();
+        assert!(matches!(
+            LinuxBubblewrap::default().run(&spec),
+            Err(SandboxError::PolicyViolation(_))
+        ));
+        spec.writable_paths = vec![std::env::temp_dir(), std::env::temp_dir()];
+        assert!(matches!(
+            LinuxBubblewrap::default().run(&spec),
+            Err(SandboxError::PolicyViolation(_))
+        ));
+    }
+
+    #[test]
+    fn reserved_readonly_mount_target_is_rejected() {
+        let mount = ReadOnlyMount::new(std::env::temp_dir(), SANDBOX_WORKSPACE);
+        assert!(matches!(
+            LinuxBubblewrap::with_read_only_mounts(vec![mount]),
+            Err(SandboxError::PolicyViolation(_))
+        ));
+    }
+
+    #[test]
+    fn top_level_readonly_mount_is_runner_owned() {
+        let mount = ReadOnlyMount::new(std::env::temp_dir(), HERMETIC_RUST_TOOLCHAIN_ROOT);
+        let runner = LinuxBubblewrap::with_read_only_mounts(vec![mount.clone()]).unwrap();
+        assert_eq!(runner.read_only_mounts(), &[mount]);
+    }
+
+    #[test]
+    fn candidate_cannot_override_loader_or_toolchain_environment() {
+        let mut spec = base_spec(std::env::temp_dir());
+        spec.environment
+            .insert("LD_PRELOAD".into(), "/workspace/evil.so".into());
+        assert!(matches!(
+            LinuxBubblewrap::default().run(&spec),
+            Err(SandboxError::PolicyViolation(_))
+        ));
+
+        let mut spec = base_spec(std::env::temp_dir());
+        spec.environment
+            .insert("RUSTC".into(), "/workspace/fake-rustc".into());
+        assert!(matches!(
+            LinuxBubblewrap::default().run(&spec),
+            Err(SandboxError::PolicyViolation(_))
+        ));
+    }
+
+    #[test]
+    fn hermetic_rust_policy_pins_readonly_inputs_and_cargo_environment() {
+        let temp = std::env::temp_dir();
+        let policy = HermeticRustPolicy::new(&temp, &temp, &temp, &temp);
+        let runner = policy.runner().unwrap();
+        let targets: Vec<&Path> = runner
+            .read_only_mounts()
+            .iter()
+            .map(|mount| mount.target.as_path())
+            .collect();
+        assert!(targets.contains(&Path::new(HERMETIC_SOURCE_ROOT)));
+        assert!(targets.contains(&Path::new(HERMETIC_RUST_TOOLCHAIN_ROOT)));
+        assert!(targets.contains(&Path::new(HERMETIC_CARGO_VENDOR_ROOT)));
+        assert!(targets.contains(&Path::new(HERMETIC_CARGO_HOME_ROOT)));
+        assert_eq!(
+            runner
+                .protected_environment()
+                .get(OsStr::new("CARGO_NET_OFFLINE")),
+            Some(&OsString::from("true"))
+        );
+        assert_eq!(
+            runner
+                .protected_environment()
+                .get(OsStr::new("CARGO_TARGET_DIR")),
+            Some(&OsString::from("/workspace/target"))
+        );
+    }
+
+    #[test]
+    fn requested_limits_are_translated_without_shell_parsing() {
+        let mut spec = base_spec(std::env::temp_dir());
+        spec.max_memory_bytes = Some(64 * 1024 * 1024);
+        spec.max_file_size_bytes = Some(1024 * 1024);
+        spec.max_processes = Some(8);
+        spec.cpu_time_limit = Some(Duration::from_millis(1500));
+
+        match LinuxBubblewrap::resource_limit_args(&spec) {
+            Ok(Some((_program, args))) => {
+                let args: Vec<String> = args
+                    .iter()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect();
+                assert!(args.contains(&"--as=67108864:67108864".to_string()));
+                assert!(args.contains(&"--fsize=1048576:1048576".to_string()));
+                assert!(args.contains(&"--nproc=8:8".to_string()));
+                assert!(args.contains(&"--cpu=2:2".to_string()));
+            }
+            Ok(None) => panic!("limits unexpectedly omitted"),
+            Err(SandboxError::PolicyViolation(_)) => {
+                // Minimal platforms may legitimately lack prlimit. The runtime
+                // behavior is fail-closed in that case.
+            }
+            Err(error) => panic!("unexpected error: {error:?}"),
         }
     }
 }

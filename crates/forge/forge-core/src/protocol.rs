@@ -160,8 +160,7 @@ mod tests {
         };
 
         let bytes = serde_json::to_vec(&payload).expect("sérialisation");
-        let recovered: EvaluationPayload =
-            serde_json::from_slice(&bytes).expect("désérialisation");
+        let recovered: EvaluationPayload = serde_json::from_slice(&bytes).expect("désérialisation");
 
         assert_eq!(recovered.candidate_id, payload.candidate_id);
         assert_eq!(recovered.source_code, payload.source_code);
@@ -205,8 +204,7 @@ mod tests {
         };
 
         let bytes = serde_json::to_vec(&result).expect("sérialisation");
-        let recovered: EvaluationResult =
-            serde_json::from_slice(&bytes).expect("désérialisation");
+        let recovered: EvaluationResult = serde_json::from_slice(&bytes).expect("désérialisation");
 
         assert!(!recovered.is_valid);
         assert_eq!(
