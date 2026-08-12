@@ -1,0 +1,123 @@
+name: Rebase PR1 on current main
+
+on:
+  push:
+    branches: ["arch/canonical-octasoma-v05"]
+
+permissions:
+  contents: write
+
+jobs:
+  merge-main:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: arch/canonical-octasoma-v05
+          fetch-depth: 0
+      - run: rustup toolchain install 1.89.0 --profile minimal
+      - name: Merge current main without losing PR2 hardening
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          set +e
+          git merge --no-commit --no-ff origin/main
+          merge_rc=$?
+          set -e
+
+          if [ "$merge_rc" -ne 0 ]; then
+            # PR #2 owns the newer sandbox gate; retain it wholesale.
+            if git ls-files -u -- .github/workflows/sandbox-safety.yml | grep -q .; then
+              git checkout --theirs -- .github/workflows/sandbox-safety.yml
+              git add .github/workflows/sandbox-safety.yml
+            fi
+            # Start CI from current main, then re-apply only PR #1's canonical
+            # OctaSoma workspace assertion.
+            if git ls-files -u -- .github/workflows/ci.yml | grep -q .; then
+              git checkout --theirs -- .github/workflows/ci.yml
+              git add .github/workflows/ci.yml
+            fi
+            # Keep the new RSI/candidate graph from PR #2, then re-apply only
+            # PR #1's canonical OctaSoma source identity.
+            if git ls-files -u -- crates/ccos-rsi/Cargo.toml | grep -q .; then
+              git checkout --theirs -- crates/ccos-rsi/Cargo.toml
+              git add crates/ccos-rsi/Cargo.toml
+            fi
+            # The old PR #1 lockfile predates PR #2. Never resurrect it.
+            if git ls-files -u -- Cargo.lock | grep -q .; then
+              git checkout --theirs -- Cargo.lock
+              git add Cargo.lock
+            fi
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          ci = Path('.github/workflows/ci.yml')
+          text = ci.read_text()
+          old = '''      - run: >-
+          cargo +1.89.0 test --locked
+          -p scirust -p slha-mcp -p slha-c -p ccos-memory-runtime
+          -p octasoma -p octacore -p rsi -p ccos-sandbox
+'''
+          new = '''      - run: >-
+          cargo +1.89.0 test --locked
+          -p scirust -p slha-mcp -p slha-c -p ccos-memory-runtime
+          -p octacore -p rsi -p ccos-sandbox
+      - name: Canonical OctaSoma dependency path
+        run: cargo +1.89.0 test --features octasoma --lib --locked
+'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif 'Canonical OctaSoma dependency path' not in text:
+              raise SystemExit('current-main CI anchor changed; refusing blind edit')
+          ci.write_text(text)
+
+          rsi = Path('crates/ccos-rsi/Cargo.toml')
+          text = rsi.read_text()
+          old = '''# CCOS_EXTENDED: repointed from the git dep to the vendored workspace member
+# (`crates/ccos-octasoma`) — air-gap: no network fetch. Same package name `octasoma`,
+# same v0.4.0, so the `octasoma` feature's API is unchanged.
+octasoma = { path = "../ccos-octasoma", optional = true }
+'''
+          new = '''# Canonical OctaSoma source, pinned to the same reviewed revision as the
+# Research root and OctaCore so RSI cannot reactivate the historical vendor.
+octasoma = { git = "https://github.com/Memorithm/octasoma", rev = "145761aeb52ef8ded85dcf2b8c97690005284926", default-features = false, optional = true }
+'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif 'rev = "145761aeb52ef8ded85dcf2b8c97690005284926"' not in text:
+              raise SystemExit('current-main RSI manifest anchor changed; refusing blind edit')
+          rsi.write_text(text)
+          PY
+
+          git add .github/workflows/ci.yml crates/ccos-rsi/Cargo.toml
+          unresolved="$(git diff --name-only --diff-filter=U)"
+          if [ -n "$unresolved" ]; then
+            echo "Unexpected unresolved conflicts:" >&2
+            echo "$unresolved" >&2
+            exit 1
+          fi
+
+      - name: Reconcile lockfile and validate canonical paths
+        run: |
+          set -euo pipefail
+          # Start from PR #2's lockfile and let Cargo make only the changes
+          # required by the merged canonical-OctaSoma manifests.
+          cargo +1.89.0 check --features octasoma
+          cargo +1.89.0 test --features octasoma --lib --locked
+          cargo +1.89.0 check --features octacore --locked
+          cargo +1.89.0 check --workspace --locked
+          git diff --check
+
+      - name: Commit merge and remove one-shot workflow
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/rebase-pr1-main.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "merge: refresh OctaSoma canonicalization on RSI main"
+          git push origin HEAD:arch/canonical-octasoma-v05
