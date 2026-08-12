@@ -52,6 +52,10 @@ pub mod audit;
 // `rsi` feature) — CCOS depends on `rsi`, not the reverse, so this crate has no
 // edge on `ccos`. `AuditEvent::payload()` was promoted to `pub` to let the moved
 // adapter build the canonical payload string.
+pub mod candidate_engine;
+pub mod candidate_policy;
+pub mod candidate_protocol;
+pub mod candidate_wire;
 pub mod checkpoint;
 pub mod cma;
 pub mod convergence;
@@ -60,6 +64,8 @@ pub mod criticality;
 // `soul-rsi` : propose un patch → build+test en copie isolée → garde si meilleur.
 pub mod dgm;
 pub mod dynamics;
+#[cfg(feature = "execution-attestation")]
+pub mod execution_attestation;
 #[cfg(feature = "forge")]
 pub mod forge_meta;
 #[cfg(feature = "forge")]
@@ -76,6 +82,8 @@ pub mod measured_substrate;
 pub mod memory;
 pub mod meta;
 pub mod obs;
+pub mod orchestrator;
+pub mod orchestrator_audit;
 // Ω concret : banc de tâches réelles nommées (extension de §1, sans duplication).
 #[cfg(feature = "octasoma")]
 pub mod octasoma_memory;
@@ -103,11 +111,34 @@ pub use agent::{RSIAgent, StepReport};
 pub use api::{ApiResult, RsiApi};
 pub use ascent::{ascend, Guard, RefineTask, Report, StopReason as AscentStop};
 pub use audit::{AuditEvent, AuditLog, HashChainLog, TraceEvent};
+#[cfg(feature = "execution-attestation")]
+pub use candidate_engine::CandidateExecutionAttestation;
+pub use candidate_engine::{SandboxCandidateEvaluator, SealedCandidateEvaluator};
+pub use candidate_policy::{
+    validate_adoption, validate_candidate, validate_evaluation, ChampionChallengerPolicy,
+    EvaluationPair, PromotionEvidenceBundle, RepeatedSeedDecision, RepeatedSeedPromotionPolicy,
+    SeedEvidence,
+};
+pub use candidate_protocol::{
+    AdoptionDecision, AdoptionReceipt, CandidateEnvelope, CandidateHarness, CandidateOrigin,
+    CandidateProtocolError, EvaluationReceipt, EvaluationStatus, GuardedCandidateEvaluator,
+    ObjectiveValue, PreparedEvaluation, CANDIDATE_PROTOCOL_VERSION,
+};
+pub use candidate_wire::{
+    decode_adoption, decode_candidate, decode_evaluation, encode_adoption, encode_candidate,
+    encode_evaluation, CandidateWireError,
+};
 pub use checkpoint::Checkpoint;
 pub use cma::SepCmaEs;
 pub use convergence::{ConvergenceDetector, Trend};
 pub use criticality::{RiskConfig, RiskModel, RiskReport, RiskSignals};
 pub use dynamics::{Dynamics, StabilityConfig, StepInfo};
+#[cfg(feature = "execution-attestation")]
+pub use execution_attestation::{
+    ExecutionArchitecture, ExecutionArchitectureFamily, ExecutionAttestation,
+    ExecutionAttestationError, ExecutionBackendKind, ExecutionProfile, ExecutionReproducibility,
+    Sha256Digest, EXECUTION_PROFILE_SCHEMA_VERSION,
+};
 #[cfg(feature = "forge")]
 pub use forge_meta::ForgeMetaSearch;
 #[cfg(feature = "forge")]
@@ -120,6 +151,11 @@ pub use memory::{ContextMemory, LinearContextMemory};
 pub use meta::{CmaEsMeta, MetaOptimizer, MetaSearch, MetaStrategy};
 #[cfg(feature = "octasoma")]
 pub use octasoma_memory::OctaSomaMemory;
+pub use orchestrator::{
+    strategy_digest, CervoOrchestrator, OrchestratorConfig, RejectionReason, RoundReport,
+    SwarmEvent, SwarmMessage as OrchestratorMessage, UnitId, UnitSummary,
+};
+pub use orchestrator_audit::{canonical_swarm_payload, SwarmAuditError, SwarmAuditLog};
 pub use rng::Rng;
 pub use schedule::{LoopSchedule, MetaMeta};
 pub use state::{CognitiveState, Dims};
