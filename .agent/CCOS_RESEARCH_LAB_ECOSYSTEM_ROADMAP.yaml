@@ -1,0 +1,127 @@
+schema_version: 1
+kind: ccos_research_lab_ecosystem_agent_roadmap
+status: active
+last_updated: "2026-08-31"
+repository: Memorithm/CCOS-Research-Lab
+intended_consumer: autonomous_coding_agent
+merge_policy: never_merge_this_file_to_default_branch_unless_user_explicitly_requests
+
+mission:
+  primary: >-
+    Preserve CCOS Research Lab as the explicitly experimental environment for
+    testing self-improvement, Forge search, generated-code execution, SLHAv2,
+    OctaSoma and other cognitive mechanisms outside the stable CCOS Core and
+    governed CCOS Enterprise product boundaries.
+  ecosystem_goal: >-
+    Produce falsifiable mechanisms and evidence that may later be promoted
+    deliberately into their owning products, without allowing research code or
+    performance claims to become Core/Enterprise guarantees automatically.
+
+invariants:
+  - nothing_in_Research_Lab_is_certified_or_production_ready_by_default
+  - Research_Lab_results_do_not_change_CCOS_Core_or_Enterprise_claims_without_independent_promotion
+  - generated_code_execution_requires_an_explicit_sandbox_or_external_isolation_boundary_matching_the_claim
+  - vendored_RSI_Forge_SLHAv2_OctaSoma_or_other_code_must_retain_owner_lineage
+  - replay_relaxed_or_nondeterministic_features_must_be_explicitly_labeled
+  - negative_and_failed_experiments_are_retained_as_evidence
+  - required_CI_must_be_green_on_exact_PR_head_before_merge
+
+ownership:
+  role: experimental_cognitive_and_self_improvement_integration_lab
+  owns:
+    - research_only_integration_harnesses
+    - experimental_combination_and_ablation_results
+    - promotion_evidence_packages
+    - Research_Lab_specific_sandbox_and_generated_code_experiment_configuration
+  does_not_own:
+    - CCOS_Core_stable_memory_semantics
+    - CCOS_Enterprise_governance_or_multi_tenancy
+    - RSI_canonical_self_improvement_semantics
+    - Forge_canonical_search_semantics
+    - SLHAv2_canonical_KV_semantics
+    - OctaSoma_canonical_memory_semantics
+
+interfaces:
+  Memorithm/CCOS-Core:
+    status: promotion_target_only
+    rule: no_research_mechanism_enters_Core_without_default_determinism_replay_storage_security_and_measurement_qualification
+  Memorithm/CCOS-Enterprise:
+    status: independent_governance_target_only
+    rule: no_research_feature_enters_Enterprise_without_separate_authorization_tenancy_quota_and_security_qualification
+  Memorithm/RSI:
+    status: active_lineage_dependency_or_snapshot
+    rule: compare_against_canonical_RSI_before_modifying_shared_semantics
+  Memorithm/forge:
+    status: active_lineage_dependency_or_snapshot
+    rule: executed_evidence_and_canonical_Forge_contracts_remain_authoritative
+  Memorithm/SLHAv2:
+    status: active_experimental_integration
+    rule: keep_SLHA_format_quality_and_real_model_claims_authoritative_in_SLHAv2
+  Memorithm/octasoma:
+    status: active_experimental_integration
+    rule: keep_memory_semantics_authoritative_in_OctaSoma
+  Memorithm/SciRust-Verify:
+    status: planned
+    rule: use_scoped_research_evidence_dossiers_without_promoting_lab_results_to_product_claims
+
+roadmap:
+  - id: LAB0
+    name: Vendored lineage and feature-boundary audit
+    status: active_priority
+    goals:
+      - map_every_embedded_external_engine_to_exact_owner_commit_or_fork_status
+      - identify_semantic_divergence_and_security_drift
+      - separate_adapter_code_from_copied_product_code
+  - id: LAB1
+    name: Experimental isolation qualification
+    status: active
+    goals:
+      - verify_generated_code_execution_boundary
+      - distinguish_process_limits_container_namespace_VM_and_air_gap_guarantees
+      - fail_closed_when_experiment_requires_unavailable_isolation
+  - id: LAB2
+    name: Reproducible experiment envelope
+    status: active
+    goals:
+      - hypothesis_configuration_owner_commit_inputs_outputs_environment_and_verdict
+      - deterministic_or_declared_nondeterministic_mode
+      - negative_result_retention
+      - exact_feature_matrix
+  - id: LAB3
+    name: Core promotion gate
+    status: planned
+    goals:
+      - independent_Core_reimplementation_or_minimal_port
+      - default_determinism_and_replay_tests
+      - no_dependency_on_RSI_Forge_or_self_modification
+      - measured_context_value_or_correctness_evidence
+  - id: LAB4
+    name: Enterprise promotion gate
+    status: planned
+    goals:
+      - tenant_authorization_quota_backup_and_audit_contract
+      - security_adversarial_testing
+      - no_raw_research_namespace_exposure
+  - id: LAB5
+    name: Cross-ecosystem research orchestration
+    status: planned
+    goals:
+      - SoulSystem_or_Orchestrator_experiment_drivers_only_through_bounded_contracts
+      - SciRust_Verify_evidence_sealing
+      - Hub_orchestration_only_for_published_non_privileged_components
+
+agent_operating_protocol:
+  must_read_this_file:
+    - at_start_of_every_agent_session
+    - before_vendored_engine_semantic_or_sandbox_changes
+    - before_Core_or_Enterprise_promotion
+    - before_cross_repository_integration
+    - before_PR_or_merge_decisions
+  must_update_this_file:
+    - when_embedded_engine_lineage_changes
+    - when_experiment_or_promotion_status_changes
+    - when_isolation_guarantees_change
+  fail_closed: >-
+    If this roadmap cannot be read, do not make major vendored-semantic,
+    generated-code-isolation, product-promotion, cross-repository, or merge
+    decisions. Read-only diagnosis is allowed.
